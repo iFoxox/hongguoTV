@@ -56,7 +56,7 @@ internal class RankingScreen(
                 background =
                     TvStyle.shape(
                         activity,
-                        if (isSelected) android.graphics.Color.rgb(48, 32, 29) else TvStyle.surface,
+                        if (isSelected) TvStyle.accentSoft else TvStyle.surface,
                         if (hasFocus()) TvStyle.accent else android.graphics.Color.TRANSPARENT,
                     )
             }
@@ -86,7 +86,7 @@ internal class RankingScreen(
                     }
                     .apply {
                         isSelected = state.board == board
-                        nextFocusUpId = nav[2].id
+                        TvStyle.contentToNav(this, nav[2])
                     }
             bar.addView(
                 control,
@@ -98,9 +98,10 @@ internal class RankingScreen(
             controls += control
         }
         bar.addView(View(activity), params(0, 1).apply { weight = 1f })
-        filterButton = button("筛选题材") { chooseTopic() }.apply { nextFocusUpId = nav[2].id }
+        filterButton =
+            button("筛选题材") { chooseTopic() }.apply { TvStyle.contentToNav(this, nav[2]) }
         refreshButton = button("刷新") { maybeRefresh(state.board, force = true) }
-            .apply { nextFocusUpId = nav[2].id }
+            .apply { TvStyle.contentToNav(this, nav[2]) }
         bar.addView(filterButton, params(-2))
         bar.addView(refreshButton, params(-2).apply { leftMargin = dp(8) })
         controls += filterButton
@@ -109,7 +110,7 @@ internal class RankingScreen(
             v.nextFocusLeftId = controls.getOrNull(i - 1)?.id ?: v.id
             v.nextFocusRightId = controls.getOrNull(i + 1)?.id ?: v.id
         }
-        nav.forEach { it.nextFocusDownId = controls[state.board.ordinal].id }
+        TvStyle.navInto(nav, controls[state.board.ordinal])
         addView(bar)
         subtitle.setPadding(0, dp(9), 0, dp(9))
         subtitle.maxLines = 2
@@ -127,7 +128,7 @@ internal class RankingScreen(
             controls[i].background =
                 TvStyle.shape(
                     activity,
-                    if (state.board == b) android.graphics.Color.rgb(48, 32, 29)
+                    if (state.board == b) TvStyle.accentSoft
                     else TvStyle.surface,
                     if (controls[i].hasFocus()) TvStyle.accent
                     else android.graphics.Color.TRANSPARENT,

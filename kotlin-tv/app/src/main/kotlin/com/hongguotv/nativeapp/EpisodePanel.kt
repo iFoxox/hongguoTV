@@ -45,11 +45,18 @@ class EpisodePanel(
             isFocusable = true
             isFocusableInTouchMode = true
             fun paint(focus: Boolean) {
+                setTextColor(
+                    when {
+                        focus -> TvStyle.onAccent
+                        active -> TvStyle.accent
+                        else -> TvStyle.text
+                    }
+                )
                 background =
                     GradientDrawable().apply {
                         setColor(
                             if (focus) TvStyle.accent
-                            else if (active) Color.rgb(61, 39, 34) else TvStyle.surface
+                            else if (active) TvStyle.accentSoft else TvStyle.surface
                         )
                         cornerRadius = dp(6).toFloat()
                     }

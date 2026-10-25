@@ -27,7 +27,13 @@ internal class HomeFeedScreen(
     private val favoriteLabel: (String) -> String,
     private val backend: FeedBackend,
     private val playback: TrialPlayback,
+    private val resumes: () -> List<ResumeCard> = { emptyList() },
+    private val openResume: (Series) -> Unit = {},
+    private val cover: (ImageView, String) -> Unit = { _, _ -> },
 ) : LinearLayout(activity), Closeable {
+
+    /** 继续观看卡片数据：作品、说明行与进度（0—1）。 */
+    data class ResumeCard(val series: Series, val line: String, val fraction: Float)
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newFixedThreadPool(2)
     private var generation = 0
@@ -98,10 +104,99 @@ internal class HomeFeedScreen(
         button.setTypeface(null, if (button.isSelected) Typeface.BOLD else Typeface.NORMAL)
     }
 
-    // 组装首页布局和点击事件；分类栏、内容区、操作栏按纵向排列。
+    // 组装首页布局和点击事件；继续观看行、分类栏、内容区、操作栏按纵向排列。
     init {
         orientation = VERTICAL
         stage.id = View.generateViewId()
+
+        // 继续观看：横版剧照卡（飞牛影视式）；无记录时整行不显示，焦点链保持原状。
+        val resumeEntries = resumes()
+        val resumeCards = mutableListOf<View>()
+        if (resumeEntries.isNotEmpty()) {
+            val section = label("继续观看", 16f, TvStyle.text).apply {
+                typeface = Typeface.DEFAULT_BOLD
+                setPadding(dp(2), 0, 0, dp(7))
+            }
+            addView(section)
+            val rail =
+                HorizontalScrollView(activity).apply { isHorizontalScrollBarEnabled = false }
+            val lane = LinearLayout(activity)
+            resumeEntries.forEach { entry ->
+                val card =
+                    LinearLayout(activity).apply {
+                        orientation = VERTICAL
+                        isFocusable = true
+                        isFocusableInTouchMode = true
+                        isClickable = true
+                        id = View.generateViewId()
+                    }
+                val thumb = FrameLayout(activity)
+                val image =
+                    ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+                cover(image, entry.series.cover)
+                thumb.addView(image, FrameLayout.LayoutParams(-1, -1))
+                val track =
+                    View(activity).apply { setBackgroundColor(Color.argb(120, 255, 255, 255)) }
+                thumb.addView(
+                    track,
+                    FrameLayout.LayoutParams(-1, dp(3), Gravity.BOTTOM).apply {
+                        leftMargin = dp(6)
+                        rightMargin = dp(6)
+                        bottomMargin = dp(6)
+                    },
+                )
+                val fill = View(activity).apply { setBackgroundColor(TvStyle.accent) }
+                thumb.addView(
+                    fill,
+                    FrameLayout.LayoutParams(0, dp(3), Gravity.BOTTOM).apply {
+                        leftMargin = dp(6)
+                        bottomMargin = dp(6)
+                        thumb.post {
+                            (fill.layoutParams as FrameLayout.LayoutParams).width =
+                                ((thumb.width - dp(12)) * entry.fraction.coerceIn(0f, 1f)).toInt()
+                            fill.requestLayout()
+                        }
+                    },
+                )
+                card.addView(thumb, LayoutParams(-1, dp(112)))
+                if (entry.fraction <= 0f) {
+                    track.visibility = View.GONE
+                    fill.visibility = View.GONE
+                }
+                card.addView(
+                    label(entry.series.title, 12.5f).apply {
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                        setPadding(dp(1), dp(7), dp(1), 0)
+                    }
+                )
+                card.addView(
+                    label(entry.line, 11f, TvStyle.muted).apply {
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                        setPadding(dp(1), dp(3), dp(1), 0)
+                    }
+                )
+                card.background = TvStyle.card(activity, false)
+                card.setOnFocusChangeListener { _, focused ->
+                    card.background = TvStyle.card(activity, focused)
+                }
+                card.setOnClickListener { openResume(entry.series) }
+                lane.addView(
+                    card,
+                    LinearLayout.LayoutParams(dp(208), -2).apply {
+                        rightMargin = if (entry === resumeEntries.last()) 0 else dp(16)
+                    },
+                )
+                resumeCards += card
+            }
+            rail.addView(
+                lane,
+                FrameLayout.LayoutParams(-2, -2).apply { rightMargin = dp(4) },
+            )
+            addView(rail, lp(-1, -2).apply { bottomMargin = dp(6) })
+        }
+
         val types = LinearLayout(activity)
         recommendButton =
             button("推荐") {
@@ -132,11 +227,13 @@ internal class HomeFeedScreen(
                     rightMargin = dp(8)
                 },
             )
-            b.nextFocusUpId = nav.first().id
+            if (!TvStyle.sideNav)
+                b.nextFocusUpId = resumeCards.firstOrNull()?.id ?: nav.first().id
             b.nextFocusDownId = stage.id
             b.nextFocusLeftId = typeChoices.getOrNull(i - 1)?.id ?: b.id
             b.nextFocusRightId = typeChoices.getOrNull(i + 1)?.id ?: b.id
         }
+        resumeCards.forEach { it.nextFocusDownId = recommendButton.id }
         addView(types, lp(-1, dp(48)))
         val content = LinearLayout(activity)
         stage.isFocusable = true
@@ -232,12 +329,12 @@ internal class HomeFeedScreen(
         stage.nextFocusRightId = stage.id
         stage.nextFocusUpId = stage.id
         stage.nextFocusDownId = stage.id
-        nav.forEach {
-            it.nextFocusDownId =
-                (if (state.recommendation) recommendButton
-                    else if (state.category == DramaCategory.COMIC) comicButton else realButton)
-                    .id
-        }
+        TvStyle.navInto(
+            nav,
+            resumeCards.firstOrNull()
+                ?: (if (state.recommendation) recommendButton
+                    else if (state.category == DramaCategory.COMIC) comicButton else realButton),
+        )
         stage.setOnFocusChangeListener { _, focused ->
             stage.background = TvStyle.card(activity, focused)
         }

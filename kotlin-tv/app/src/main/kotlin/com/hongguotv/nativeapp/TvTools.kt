@@ -244,8 +244,14 @@ class TvTools(private val activity: Activity) {
                             backgroundTintList =
                                 android.content.res.ColorStateList(
                                     arrayOf(intArrayOf(android.R.attr.state_focused), intArrayOf()),
-                                    intArrayOf(Color.rgb(255, 99, 76), Color.rgb(31, 36, 47)),
+                                    intArrayOf(TvStyle.accent, TvStyle.raised),
                                 )
+                            setTextColor(
+                                android.content.res.ColorStateList(
+                                    arrayOf(intArrayOf(android.R.attr.state_focused), intArrayOf()),
+                                    intArrayOf(TvStyle.onAccent, TvStyle.text),
+                                )
+                            )
                             setOnClickListener {
                                 when (key) {
                                     "清空" -> {

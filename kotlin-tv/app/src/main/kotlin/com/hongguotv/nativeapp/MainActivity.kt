@@ -30,11 +30,25 @@ import java.util.concurrent.Executors
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class MainActivity : Activity() {
-    private val bg = TvStyle.background
-    private val surface = TvStyle.surface
+    private var bg = TvStyle.background
+        private set
+    private var surface = TvStyle.surface
+        private set
     private val accent = TvStyle.accent
-    private val white = TvStyle.text
-    private val muted = TvStyle.muted
+    private var white = TvStyle.text
+        private set
+    private var muted = TvStyle.muted
+        private set
+
+    // 主题或导航布局变化后刷新本地缓存；界面随后整体重建。
+    private fun applyTheme() {
+        bg = TvStyle.background
+        surface = TvStyle.surface
+        white = TvStyle.text
+        muted = TvStyle.muted
+        TvStyle.sideNav = widthDp() >= 700
+        if (::root.isInitialized) root.setBackgroundColor(bg)
+    }
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newFixedThreadPool(3)
     private val repository = ContentRepository()
@@ -195,6 +209,8 @@ class MainActivity : Activity() {
     private var generation = 0
     private var screen = "catalog"
     private var tab = 0
+    private val tabLabels =
+        listOf("首页", "找剧", "排行榜", "收藏", "观看历史", "账户预约", "设置")
     private lateinit var librarySources: LibrarySources
     private val sourceButtons = mutableListOf<View>()
     private var page = 1
@@ -309,8 +325,7 @@ class MainActivity : Activity() {
         fun paint(focused: Boolean) {
             view.background =
                 rounded(
-                    if (focused) TvStyle.raised
-                    else if (selected) Color.rgb(61, 39, 34) else surface,
+                    if (focused) surface else if (selected) TvStyle.raised else Color.TRANSPARENT,
                     if (focused) accent else Color.TRANSPARENT,
                 )
         }
@@ -355,6 +370,8 @@ class MainActivity : Activity() {
                 View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         librarySources = LibrarySources(this)
         library = Library(this)
+        TvStyle.init(this)
+        applyTheme()
         artwork = ArtworkLoader(this)
         tvTools = TvTools(this)
         root = FrameLayout(this).apply { setBackgroundColor(bg) }
@@ -493,6 +510,160 @@ class MainActivity : Activity() {
             container.addView(heading)
         }
         return container
+    }
+
+    // 内容页骨架：宽屏为「左侧边栏 + 内容区」（飞牛影视式），窄屏沿用「品牌 + 顶部导航」。
+    private fun catalogPage(): LinearLayout {
+        if (!TvStyle.sideNav) {
+            val container = base()
+            val top = row().apply { setPadding(0, 0, 0, dp(8)) }
+            val brand = row()
+            brand.addView(
+                ImageView(this).apply {
+                    setImageResource(com.hongguotv.nativeapp.R.drawable.app_icon)
+                },
+                lp(dp(28), dp(28)).apply { rightMargin = dp(9) },
+            )
+            brand.addView(
+                text("果映 TV", if (widthDp() < 800) 17f else 22f).apply {
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                }
+            )
+            top.addView(brand, lp(dp(if (widthDp() < 800) 105 else 140), dp(44)))
+            tabLabels.forEachIndexed { index, label ->
+                val item = addButton(top, label, index == tab) { switchTab(index) }
+                item.textSize = if (widthDp() < 1000) 13f else 15f
+                item.setPadding(dp(9), dp(10), dp(9), dp(10))
+                fun paint(focused: Boolean) {
+                    item.setTextColor(
+                        when {
+                            focused -> TvStyle.text
+                            index == tab -> accent
+                            else -> muted
+                        }
+                    )
+                    item.background =
+                        rounded(
+                            when {
+                                focused -> surface
+                                index == tab -> TvStyle.accentSoft
+                                else -> Color.TRANSPARENT
+                            }
+                        )
+                    item.setTypeface(
+                        null,
+                        if (focused || index == tab) Typeface.BOLD else Typeface.NORMAL,
+                    )
+                }
+                paint(false)
+                item.setOnFocusChangeListener { _, focused -> paint(focused) }
+                nav += item
+            }
+            container.addView(top)
+            container.addView(
+                View(this).apply { setBackgroundColor(TvStyle.outline) },
+                lp(-1, dp(1)).apply { bottomMargin = dp(6) },
+            )
+            return container
+        }
+        root.removeAllViews()
+        root.setBackgroundColor(bg)
+        val shell = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val side =
+            column().apply {
+                setBackgroundColor(TvStyle.raised)
+                setPadding(dp(12), dp(20), dp(12), dp(16))
+            }
+        val brand = row().apply { setPadding(dp(6), 0, 0, dp(12)) }
+        brand.addView(
+            ImageView(this).apply {
+                setImageResource(com.hongguotv.nativeapp.R.drawable.app_icon)
+            },
+            lp(dp(26), dp(26)).apply { rightMargin = dp(8) },
+        )
+        brand.addView(
+            text("果映 TV", 15f).apply {
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            }
+        )
+        side.addView(brand)
+        tabLabels.forEachIndexed { index, label -> nav += sideNavItem(side, index, label) }
+        side.addView(Space(this), lp(-1, 0).apply { weight = 1f })
+        addButton(side, "切换主题 · ${TvStyle.modeLabel()}") { switchTheme() }
+        shell.addView(side, lp(dp(188), -1))
+        shell.addView(View(this).apply { setBackgroundColor(TvStyle.outline) }, lp(dp(1), -1))
+        val content = column().apply { setPadding(dp(22), dp(20), dp(28), dp(10)) }
+        shell.addView(content, lp(0, -1).apply { weight = 1f })
+        root.addView(shell, FrameLayout.LayoutParams(-1, -1))
+        return content
+    }
+
+    // 侧栏导航项：单个 TextView 保持与顶部导航一致的点击与焦点契约；
+    // 选中橙色高亮加左侧指示条（compound drawable），焦点为表面色加橙描边。
+    private fun sideNavItem(
+        side: LinearLayout,
+        index: Int,
+        label: String,
+    ): TextView {
+        val item = text(label, 14f, muted)
+        item.id = View.generateViewId()
+        item.gravity = Gravity.CENTER_VERTICAL
+        item.minHeight = dp(42)
+        item.setPadding(dp(6), dp(11), dp(10), dp(11))
+        item.compoundDrawablePadding = dp(10)
+        item.isFocusable = true
+        item.isFocusableInTouchMode = true
+        item.isClickable = true
+        fun paint(focused: Boolean) {
+            val selected = index == tab
+            item.setTextColor(if (selected || focused) accent else muted)
+            item.setTypeface(
+                null,
+                if (selected || focused) Typeface.BOLD else Typeface.NORMAL,
+            )
+            item.background =
+                TvStyle.shape(
+                    this,
+                    when {
+                        focused -> surface
+                        selected -> TvStyle.accentSoft
+                        else -> Color.TRANSPARENT
+                    },
+                    if (focused) accent else Color.TRANSPARENT,
+                    9,
+                )
+            item.setCompoundDrawables(
+                if (selected)
+                    GradientDrawable().apply {
+                        setColor(accent)
+                        cornerRadius = dp(2).toFloat()
+                        setSize(dp(3), dp(16))
+                    }
+                else null,
+                null,
+                null,
+                null,
+            )
+        }
+        paint(false)
+        item.setOnClickListener { switchTab(index) }
+        item.setOnFocusChangeListener { _, focused -> paint(focused) }
+        side.addView(
+            item,
+            lp(-1, -2).apply {
+                topMargin = dp(2)
+                bottomMargin = dp(2)
+            },
+        )
+        return item
+    }
+
+    // 切换浅色 / 深色主题并按当前栏目重建界面；主题选择即时持久化。
+    private fun switchTheme() {
+        TvStyle.toggle(this)
+        applyTheme()
+        showCatalog()
+        nav.getOrNull(tab)?.requestFocus()
     }
 
     private fun loadCover(view: ImageView, url: String) {
@@ -785,46 +956,10 @@ class MainActivity : Activity() {
         invalidatePage()
         screen = "catalog"
         releaseCatalogViews()
-        val container = base()
+        applyTheme()
+        val container = catalogPage()
         if (tab != 0 && foreground && library.isLoaded && !favoriteMonitor.running)
             main.post { if (foreground && screen == "catalog") favoriteMonitor.check() }
-        val top = row().apply { setPadding(0, 0, 0, dp(8)) }
-        val brand = row()
-        brand.addView(
-            ImageView(this).apply { setImageResource(com.hongguotv.nativeapp.R.drawable.app_icon) },
-            lp(dp(28), dp(28)).apply { rightMargin = dp(9) },
-        )
-        brand.addView(
-            text("果映 TV", if (widthDp() < 800) 17f else 22f).apply {
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            }
-        )
-        top.addView(brand, lp(dp(if (widthDp() < 800) 105 else 140), dp(44)))
-        listOf("首页", "找剧", "排行榜", "收藏", "观看历史", "账户预约", "设置").forEachIndexed { index, label ->
-            val item = addButton(top, label, index == tab) { switchTab(index) }
-            item.textSize = if (widthDp() < 1000) 13f else 15f
-            item.setPadding(dp(9), dp(10), dp(9), dp(10))
-            fun paint(focused: Boolean) {
-                item.setTextColor(if (focused) bg else if (index == tab) accent else muted)
-                item.background =
-                    rounded(
-                        if (focused) white
-                        else if (index == tab) Color.rgb(48, 32, 29) else Color.TRANSPARENT
-                    )
-                item.setTypeface(
-                    null,
-                    if (focused || index == tab) Typeface.BOLD else Typeface.NORMAL,
-                )
-            }
-            paint(false)
-            item.setOnFocusChangeListener { _, focused -> paint(focused) }
-            nav += item
-        }
-        container.addView(top)
-        container.addView(
-            View(this).apply { setBackgroundColor(TvStyle.outline) },
-            lp(-1, dp(1)).apply { bottomMargin = dp(6) },
-        )
         if (tab == 6) {
             val scroll = ScrollView(this)
             val body = column()
@@ -851,6 +986,25 @@ class MainActivity : Activity() {
                         startupCache = FeedStartupCache(this),
                     ),
                     Media3TrialPlayback(this),
+                    resumes = {
+                        library.history()
+                            .asSequence()
+                            .sortedByDescending { it.updatedAt }
+                            .filterNot { it.completed || library.watched(it.series.id) }
+                            .take(5)
+                            .map { entry ->
+                                HomeFeedScreen.ResumeCard(
+                                    entry.series,
+                                    "第 ${entry.episodeIndex + 1} 集 · ${formatTime(entry.position)}",
+                                    if (entry.duration > 0)
+                                        (entry.position.toFloat() / entry.duration).coerceIn(0f, 1f)
+                                    else 0f,
+                                )
+                            }
+                            .toList()
+                    },
+                    openResume = { series -> openDetail(series, true) },
+                    cover = ::loadCover,
                 )
             homeFeed = feed
             container.addView(feed, lp(-1, 0).apply { weight = 1f })
@@ -886,39 +1040,6 @@ class MainActivity : Activity() {
             ranks.start(load, focusNav)
             return
         }
-        if (tab == 0) {
-            val types = row().apply { setPadding(0, dp(8), 0, dp(6)) }
-            if (!inlineHomeFilters()) types.addView(text("片库", 12f, muted), lp(dp(42), -2))
-            ContentType.entries.forEach { type ->
-                typeButtons[type] =
-                    addButton(types, type.label, library.contentType == type) {
-                            switchContentType(type)
-                        }
-                        .apply {
-                            isSelected = library.contentType == type
-                            nextFocusUpId = nav[tab].id
-                        }
-            }
-            if (inlineHomeFilters()) {
-                top.addView(Space(this), lp(0, 1).apply { weight = 1f })
-                typeButtons.values.forEach { view ->
-                    (view as TextView).apply {
-                        textSize = 12f
-                        minHeight = dp(34)
-                        setPadding(dp(12), dp(7), dp(12), dp(7))
-                    }
-                }
-                types.setPadding(0, 0, 0, 0)
-                top.addView(types)
-            } else {
-                if (tab == 0)
-                    types.addView(
-                        text("长按确认 · 管理片单", 12f, muted).apply { setPadding(dp(14), 0, 0, 0) }
-                    )
-                container.addView(types)
-            }
-            nav.forEach { it.nextFocusDownId = typeButtons.getValue(library.contentType).id }
-        }
         if (tab == 1) {
             if (tvSearchOpen || query.isNotBlank()) {
                 val panel =
@@ -938,7 +1059,7 @@ class MainActivity : Activity() {
                 searchSuggestions = panel.suggestions
                 panel.resultEntry = { continuousCatalog?.grid?.takeIf { catalog.isNotEmpty() } }
                 container.addView(panel, lp(-1, 0).apply { weight = 1f })
-                nav.forEach { it.nextFocusDownId = panel.entry().id }
+                TvStyle.navInto(nav, panel.entry())
                 if (query.isBlank()) {
                     message(panel.results, "输入关键词后选择联想词，或按「搜索」查看剧集")
                     if (focusNav) nav[tab].requestFocus() else panel.entry().requestFocus()
@@ -976,7 +1097,7 @@ class MainActivity : Activity() {
                 }
                 searchInput = input
                 searchButton = addButton(searchRow, "搜索") { search() }
-                input.nextFocusUpId = nav[tab].id
+                input.nextFocusUpId = if (TvStyle.sideNav) View.NO_ID else nav[tab].id
                 searchButton?.nextFocusUpId = input.nextFocusUpId
                 lateinit var recent: TextView
                 recent = addButton(searchRow, "历史") { showSearchHistory(recent) }
@@ -1002,7 +1123,7 @@ class MainActivity : Activity() {
                         addButton(searchRow, "返回分类") { returnToDiscovery() }
                             .apply { nextFocusUpId = input.nextFocusUpId }
 
-                nav.forEach { it.nextFocusDownId = input.id }
+                TvStyle.navInto(nav, input)
                 input.setOnEditorActionListener { _, _, _ ->
                     search()
                     true
@@ -1073,7 +1194,7 @@ class MainActivity : Activity() {
             if (isLocalFavorites())
                 favoriteCheck =
                     addButton(heading, "检查更新") { favoriteMonitor.check(force = true) }
-                        .apply { nextFocusUpId = nav[tab].id }
+                        .apply { TvStyle.contentToNav(this, nav[tab]) }
             if (isLocalHistory() && library.history().isNotEmpty()) {
                 historyManage =
                     addButton(heading, "管理本机记录") {
@@ -1096,7 +1217,7 @@ class MainActivity : Activity() {
                                 }
                             }
                         }
-                        .apply { nextFocusUpId = nav[tab].id }
+                        .apply { TvStyle.contentToNav(this, nav[tab]) }
             }
             if (accountCatalog()) {
                 historyManage =
@@ -1113,9 +1234,9 @@ class MainActivity : Activity() {
                             if (!cloudAccount.signedIn) cloudAccount.show()
                             else refreshAccountSection()
                         }
-                        .apply { nextFocusUpId = nav[tab].id }
+                        .apply { TvStyle.contentToNav(this, nav[tab]) }
                 addButton(heading, "账号管理") { cloudAccount.show() }
-                    .apply { nextFocusUpId = nav[tab].id }
+                    .apply { TvStyle.contentToNav(this, nav[tab]) }
             }
             container.addView(heading)
             if (tab == 3 || tab == 4) {
@@ -1143,7 +1264,7 @@ class MainActivity : Activity() {
                 sourceButtons[1].nextFocusLeftId = sourceButtons[0].id
                 sourceButtons[1].nextFocusRightId = sourceButtons[1].id
                 container.addView(sources)
-                nav.forEach { it.nextFocusDownId = sourceButtons[if (account) 1 else 0].id }
+                TvStyle.navInto(nav, sourceButtons[if (account) 1 else 0])
                 favoriteCheck?.nextFocusDownId = sourceButtons[if (account) 1 else 0].id
                 historyManage?.nextFocusDownId = sourceButtons[if (account) 1 else 0].id
                 val note =
@@ -1187,7 +1308,7 @@ class MainActivity : Activity() {
                 container.addView(filters)
                 historyManage?.nextFocusDownId =
                     reservationFilters[if (reservationOnline) 0 else 1].id
-                nav.forEach { it.nextFocusDownId = historyManage!!.id }
+                TvStyle.navInto(nav, historyManage!!)
             }
             if (isLocalFavorites()) {
                 favoriteStatus =
@@ -1427,10 +1548,11 @@ class MainActivity : Activity() {
                         text(rankLabel, 15f).apply {
                             setTypeface(null, Typeface.BOLD)
                             setPadding(dp(8), dp(5), dp(8), dp(5))
+                            setTextColor(Color.WHITE)
                             background =
                                 rounded(
                                     if ((position?.rank ?: Int.MAX_VALUE) <= 3) accent
-                                    else Color.rgb(28, 31, 39)
+                                    else Color.argb(205, 15, 18, 24)
                                 )
                         },
                         FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START),
@@ -1662,7 +1784,7 @@ class MainActivity : Activity() {
         }
         if (sourceButtons.isNotEmpty()) {
             val selected = sourceButtons[if (isAccountHistory() || isAccountFavorites()) 1 else 0]
-            nav.forEach { it.nextFocusDownId = selected.id }
+            TvStyle.navInto(nav, selected)
             sourceButtons.forEach { it.nextFocusDownId = cards.first().id }
             favoriteCheck?.nextFocusDownId = selected.id
             historyManage?.nextFocusDownId = selected.id
@@ -1790,7 +1912,7 @@ class MainActivity : Activity() {
                         ?: ContinuousCatalogView.Position(id, 0)
                 }
         browser.show(catalog, hasMore && page < 100, position)
-        nav.forEach { it.nextFocusDownId = searchInput?.id ?: upper.id }
+        TvStyle.navInto(nav, searchInput ?: upper)
         searchInput?.nextFocusDownId = browser.grid.id
         searchButton?.nextFocusDownId = browser.grid.id
         searchActions.forEach { it.nextFocusDownId = browser.grid.id }
@@ -1903,7 +2025,7 @@ class MainActivity : Activity() {
             if (loading) if (homeFromCache) "已显示上次内容 · 正在更新热门…" else "正在更新热门…" else "刷新热门"
         home.refresh.setOnClickListener { showCatalog(true) }
         typeButtons.values.forEach { it.nextFocusDownId = home.firstId() }
-        if (inlineHomeFilters()) nav.forEach { it.nextFocusDownId = home.firstId() }
+        if (inlineHomeFilters()) TvStyle.navIntoId(nav, home.firstId())
         if (focusNav) nav[0].requestFocus()
         else if (focusType) typeButtons.getValue(library.contentType).requestFocus()
         if (hot.isNotEmpty() && !homeContentLogged) {
@@ -2138,8 +2260,8 @@ class MainActivity : Activity() {
         val playback = column()
         val device = column()
         listOf(playback, device).forEachIndexed { i, group ->
-            group.setPadding(dp(16), dp(16), dp(16), dp(16))
-            group.background = rounded(surface)
+            group.setPadding(dp(16), dp(16), dp(16), dp(12))
+            group.background = TvStyle.shape(this, surface, TvStyle.outline, 12)
             groups.addView(
                 group,
                 lp(0, -2).apply {
@@ -2151,23 +2273,25 @@ class MainActivity : Activity() {
         parent.addView(groups)
         fun heading(group: LinearLayout, title: String, subtitle: String) {
             group.addView(text(title, 18f).apply { setTypeface(null, Typeface.BOLD) })
-            group.addView(text(subtitle, 12f, muted).apply { setPadding(0, dp(5), 0, dp(15)) })
+            group.addView(text(subtitle, 12f, muted).apply { setPadding(0, dp(5), 0, dp(13)) })
         }
         fun setting(group: LinearLayout, label: String, action: () -> Unit): TextView {
             val view =
                 button(label, onClick = action).apply {
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(13), dp(11), dp(13), dp(11))
-                    background = rounded(bg)
+                    setPadding(dp(13), dp(13), dp(13), dp(13))
+                    background = rounded(Color.TRANSPARENT)
+                    setTextColor(TvStyle.text)
                     setOnFocusChangeListener { _, focused ->
+                        setTextColor(if (focused) accent else TvStyle.text)
                         background =
                             rounded(
-                                if (focused) TvStyle.raised else bg,
+                                if (focused) TvStyle.accentSoft else Color.TRANSPARENT,
                                 if (focused) accent else Color.TRANSPARENT,
                             )
                     }
                 }
-            group.addView(view, lp(-1, -2).apply { bottomMargin = dp(8) })
+            group.addView(view, lp(-1, -2).apply { bottomMargin = dp(6) })
             return view
         }
         heading(playback, "播放偏好", "所有剧集共用，播放中也可调整")
@@ -2191,6 +2315,21 @@ class MainActivity : Activity() {
             setting(playback, "自动连播  ·  ${if(library.autoNext) "开启" else "关闭"}") {
                 library.autoNext = !library.autoNext
                 autoNextButton.text = "自动连播  ·  ${if(library.autoNext) "开启" else "关闭"}"
+            }
+        val themeRow =
+            setting(playback, "外观  ·  ${TvStyle.modeLabel()}") {
+                AlertDialog.Builder(this)
+                    .setTitle("外观")
+                    .setSingleChoiceItems(
+                        arrayOf("浅色", "深色"),
+                        if (TvStyle.mode == TvStyle.Mode.LIGHT) 0 else 1,
+                    ) { dialog, which ->
+                        val next = if (which == 0) TvStyle.Mode.LIGHT else TvStyle.Mode.DARK
+                        dialog.dismiss()
+                        if (next != TvStyle.mode) switchTheme()
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
             }
         heading(device, "应用与更新", "检查新版、查看开源信息")
         lateinit var updates: TextView
@@ -2216,11 +2355,11 @@ class MainActivity : Activity() {
             }
         heading(playback, "红果账户", "账户收藏、历史与预约随账号同步")
         val account = setting(playback, "登录与账户管理") { cloudAccount.show() }
-        val left = listOf(qualityButton, defaultSpeed, frame, autoNextButton, account)
+        val left = listOf(qualityButton, defaultSpeed, frame, autoNextButton, themeRow, account)
         val right = listOf(updates, about, license)
         listOf(left, right).forEach { items ->
             items.forEachIndexed { index, view ->
-                view.nextFocusUpId = items.getOrNull(index - 1)?.id ?: nav[tab].id
+                if (index > 0) view.nextFocusUpId = items[index - 1].id
                 view.nextFocusDownId = items.getOrNull(index + 1)?.id ?: view.id
             }
         }
@@ -2232,7 +2371,9 @@ class MainActivity : Activity() {
             v.nextFocusLeftId = left[minOf(i, left.lastIndex)].id
             v.nextFocusRightId = v.id
         }
-        nav.forEach { it.nextFocusDownId = qualityButton.id }
+        TvStyle.contentToNav(qualityButton, nav[tab])
+        TvStyle.contentToNav(updates, nav[tab])
+        TvStyle.navInto(nav, qualityButton)
         parent.addView(
             text("果映 TV  /  ${BuildConfig.VERSION_NAME}    ·    hongguoTV · 非官方客户端", 12f, muted)
                 .apply { setPadding(dp(2), dp(18), 0, dp(10)) }
@@ -2401,11 +2542,44 @@ class MainActivity : Activity() {
         val content = column()
         scroll.addView(content)
         body.addView(scroll, lp(-1, 0).apply { weight = 1f })
+
+        // 背景横幅：封面放大铺满并叠加深色渐隐（API 23 无模糊，用缩放加渐变近似）。
+        val band =
+            FrameLayout(this).apply {
+                background = rounded(TvStyle.raised)
+                clipToOutline = true
+            }
+        val bandCover =
+            ImageView(this).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                alpha = .55f
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+        loadCover(bandCover, data.series.cover)
+        band.addView(bandCover, FrameLayout.LayoutParams(-1, -1))
+        band.addView(
+            View(this).apply {
+                background =
+                    GradientDrawable(
+                        GradientDrawable.Orientation.TOP_BOTTOM,
+                        intArrayOf(Color.TRANSPARENT, bg),
+                    )
+            },
+            FrameLayout.LayoutParams(-1, dp(74), Gravity.BOTTOM),
+        )
+        content.addView(band, lp(-1, dp(150)))
         val hero = row()
         hero.gravity = Gravity.TOP
-        hero.setPadding(0, dp(12), 0, dp(12))
-        val image = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
-        hero.addView(image, lp(dp(123), dp(174)).apply { rightMargin = dp(24) })
+        hero.setPadding(0, dp(0), 0, dp(12))
+        hero.translationY = -dp(56).toFloat()
+        val image =
+            ImageView(this).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                background = TvStyle.shape(this@MainActivity, surface, TvStyle.outline, 12)
+                clipToOutline = true
+                setPadding(dp(3), dp(3), dp(3), dp(3))
+            }
+        hero.addView(image, lp(dp(126), dp(178)).apply { rightMargin = dp(24) })
         loadCover(image, data.series.cover)
         val info = column()
         hero.addView(info, lp(0, -2).apply { weight = 1f })

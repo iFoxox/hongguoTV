@@ -160,7 +160,7 @@ internal class DiscoveryScreen(
                 background =
                     TvStyle.shape(
                         context,
-                        if (selected) android.graphics.Color.rgb(61, 39, 34)
+                        if (selected) TvStyle.accentSoft
                         else if (hasFocus()) TvStyle.raised else TvStyle.surface,
                         if (hasFocus()) TvStyle.accent else android.graphics.Color.TRANSPARENT,
                     )
