@@ -1,7 +1,7 @@
-name: Verify Kotlin standalone APK
+name: Android 构建与检查
 on:
   push:
-    branches: [main, 'android6-support']
+    branches: ['**']
     tags: ['kotlin-v*']
   pull_request:
     branches: [main]
@@ -25,7 +25,15 @@ jobs:
       - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
       - name: Unit tests, Android lint, and installable development APK
         run: ./kotlin-tv/gradlew -p kotlin-tv :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --console=plain
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - name: 上传调试 APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: guoying-android-debug-${{ github.run_number }}
+          path: kotlin-tv/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: 上传测试与 lint 报告
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: kotlin-native-verification
@@ -33,4 +41,3 @@ jobs:
             kotlin-tv/core/build/reports/tests/test/
             kotlin-tv/app/build/reports/tests/testDebugUnitTest/
             kotlin-tv/app/build/reports/lint-results-debug.*
-            kotlin-tv/app/build/outputs/apk/debug/*.apk
