@@ -102,7 +102,8 @@ internal class SearchSuggestionsView(
                     isClickable = true
                     setTextColor(TvStyle.text)
                     setPadding(dp(12), dp(8), dp(12), dp(8))
-                    minHeight = dp(36)
+                    minHeight = dp(TvStyle.controlSize(36))
+                    if (TvStyle.touch) minimumWidth = dp(48)
                     background = TvStyle.card(context, false)
                     setOnFocusChangeListener { _, focus ->
                         background = TvStyle.card(context, focus)

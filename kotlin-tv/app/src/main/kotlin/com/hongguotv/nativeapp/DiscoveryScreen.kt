@@ -44,6 +44,11 @@ internal class DiscoveryScreen(
     private val reset = button("重置") { change(DiscoverySelection()) }
     private val refresh = button("刷新") { request(null) }
     private val browser: ContinuousCatalogView
+    private val columns =
+        TvStyle.posterColumns(
+            (context.resources.displayMetrics.widthPixels / context.resources.displayMetrics.density)
+                .toInt()
+        )
     private var loading = false
     private var closed = false
     private var headerOffset = 0
@@ -57,18 +62,24 @@ internal class DiscoveryScreen(
     init {
         val restoredOffset = state.headerOffset
         orientation = VERTICAL
-        val bar = LinearLayout(context).apply { gravity = android.view.Gravity.CENTER_VERTICAL }
-        bar.addView(types, LayoutParams(0, -2, 1f))
-        bar.addView(toggle)
-        bar.addView(reset)
-        bar.addView(refresh)
-        addView(bar)
+        if (TvStyle.touch) {
+            val actions = MobileChoices(context,columns=3)
+            listOf(toggle,reset,refresh).forEach { actions.addView(it) }
+            addView(actions,LayoutParams(-1,-2))
+        } else {
+            val bar = LinearLayout(context).apply { gravity = android.view.Gravity.CENTER_VERTICAL }
+            bar.addView(types, LayoutParams(0, -2, 1f))
+            bar.addView(toggle)
+            bar.addView(reset)
+            bar.addView(refresh)
+            addView(bar)
+        }
         addView(scroll, LayoutParams(-1, dp(200)))
         addView(summary)
         browser =
             ContinuousCatalogView(
                 context,
-                6,
+                columns,
                 toggle,
                 { item, recycled ->
                     (recycled as? CatalogPosterCard ?: CatalogPosterCard(context)).apply {
@@ -81,12 +92,14 @@ internal class DiscoveryScreen(
                 more,
                 { if (!loading) request(state.next) },
             )
-        browser.onBrowsePosition = { position ->
+        browser.onBrowsePosition = browse@ { position ->
+            if (TvStyle.touch) return@browse
             if (!restoring) {
                 val header = getChildAt(0).height + scroll.height + summary.height
                 if (browseStep == 0)
                     browseStep = (browser.grid.getChildAt(0)?.height ?: dp(180)) + dp(10)
-                val offset = if (state.expanded) minOf(header, (position / 6) * browseStep) else 0
+                val offset =
+                    if (state.expanded) minOf(header, (position / columns) * browseStep) else 0
                 if (headerOffset != offset) {
                     headerOffset = offset
                     requestLayout()
@@ -98,7 +111,7 @@ internal class DiscoveryScreen(
         renderFilters()
         showItems()
         expand(state.expanded)
-        headerOffset = restoredOffset
+        headerOffset = if (TvStyle.touch) 0 else restoredOffset
         post {
             if (!closed) {
                 scroll.scrollTo(0, state.filterVerticalOffset)
@@ -113,14 +126,16 @@ internal class DiscoveryScreen(
             widthMeasureSpec,
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
         )
-        val height =
-            minOf(
-                groups.measuredHeight,
-                minOf(dp(260), (View.MeasureSpec.getSize(heightMeasureSpec) * .48f).toInt()),
-            )
+        val viewport = View.MeasureSpec.getSize(heightMeasureSpec)
+        val limit = if (TvStyle.touch) {
+            getChildAt(0).measure(widthMeasureSpec,View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED))
+            summary.measure(widthMeasureSpec,View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED))
+            val resultsHeight = minOf(dp(180),(viewport*.35f).toInt())
+            (viewport-getChildAt(0).measuredHeight-summary.measuredHeight-resultsHeight).coerceAtLeast(0)
+        } else minOf(dp(260),(viewport*.48f).toInt())
+        val height = minOf(groups.measuredHeight,limit)
         if (scroll.layoutParams.height != height)
             scroll.layoutParams = scroll.layoutParams.apply { this.height = height }
-        val viewport = View.MeasureSpec.getSize(heightMeasureSpec)
         super.onMeasure(
             widthMeasureSpec,
             View.MeasureSpec.makeMeasureSpec(viewport + headerOffset, View.MeasureSpec.EXACTLY),
@@ -148,25 +163,29 @@ internal class DiscoveryScreen(
             text = label
             textSize = 12f
             includeFontPadding = false
-            maxLines = 1
+            maxLines = if (TvStyle.touch) Int.MAX_VALUE else 1
+            gravity = android.view.Gravity.CENTER
             isFocusable = true
+            isFocusableInTouchMode = !TvStyle.touch
             isClickable = true
-            setPadding(dp(10), dp(7), dp(10), dp(7))
-            minHeight = dp(34)
+            setPadding(dp(if(TvStyle.touch) 8 else 10), dp(if(TvStyle.touch) 5 else 7), dp(if(TvStyle.touch) 8 else 10), dp(if(TvStyle.touch) 5 else 7))
+            minHeight = dp(TvStyle.controlSize(34))
+            if (TvStyle.touch) minimumWidth = dp(48)
+            if (TvStyle.touch) foreground = TvStyle.pressHighlight(context)
             fun paint() {
                 val selected = chosen()
                 isSelected = selected
                 setTextColor(if (selected) TvStyle.accent else TvStyle.text)
-                background =
-                    TvStyle.shape(
-                        context,
-                        if (selected) android.graphics.Color.rgb(61, 39, 34)
-                        else if (hasFocus()) TvStyle.raised else TvStyle.surface,
-                        if (hasFocus()) TvStyle.accent else android.graphics.Color.TRANSPARENT,
-                    )
+                background = TvStyle.card(context,hasFocus())
+                if(TvStyle.touch) SurfaceStyle.button(this)
             }
             setOnFocusChangeListener { _, _ -> paint() }
-            setOnClickListener { action() }
+            setOnClickListener {
+                if (TvStyle.touch)
+                    (context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                        .hideSoftInputFromWindow(windowToken,0)
+                action()
+            }
             paint()
         }
 
@@ -193,7 +212,32 @@ internal class DiscoveryScreen(
         listOf(toggle, reset, refresh).forEach { it.nextFocusDownId = target }
     }
 
+    private fun renderMobileFilters() {
+        controls.clear(); strips.clear(); groups.removeAllViews()
+        val available = state.groups.ifEmpty { listOf(DiscoveryGroup("genre","类型",emptyList())) }
+        available.forEach { group ->
+            groups.addView(TextView(context).apply {
+                text=group.label; textSize=13f; setTextColor(TvStyle.mobileMuted)
+                setPadding(dp(4),dp(4),0,0)
+            },LayoutParams(-1,-2))
+            val choices=MobileChoices(context)
+            (listOf(DiscoveryFilter("","全部"))+group.options).forEach { option ->
+                val chip=button(if(group.type=="genre" && option.id.isEmpty()) "全部类型" else option.label,
+                    { state.selection.values[group.type].orEmpty()==option.id }) {
+                    if(state.selection.values[group.type].orEmpty()!=option.id)
+                        change(state.selection.choose(group.type,option.id),group.type to option.id)
+                }
+                controls[group.type to option.id]=chip
+                choices.addView(chip)
+            }
+            groups.addView(choices,LayoutParams(-1,-2).apply { bottomMargin=dp(2) })
+        }
+        expand(state.expanded)
+        navigationChanged?.invoke()
+    }
+
     private fun renderFilters() {
+        if (TvStyle.touch) { renderMobileFilters(); return }
         val focused = controls.entries.firstOrNull { it.value.hasFocus() }?.key
         controls.clear()
         strips.clear()
@@ -228,7 +272,7 @@ internal class DiscoveryScreen(
                         }
                         .apply {
                             if (group.type != "genre") {
-                                minHeight = dp(28)
+                                minHeight = dp(TvStyle.controlSize(28))
                                 setPadding(dp(10), dp(4), dp(10), dp(4))
                             }
                         }

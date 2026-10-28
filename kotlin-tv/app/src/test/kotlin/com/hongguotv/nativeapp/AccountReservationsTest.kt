@@ -24,6 +24,15 @@ import org.robolectric.shadows.ShadowLooper
 @LooperMode(LooperMode.Mode.PAUSED)
 @GraphicsMode(GraphicsMode.Mode.LEGACY)
 class AccountReservationsTest {
+    @org.junit.Before
+    fun useRemoteDevice() {
+        TvStyle.touch = false
+        org.robolectric.Shadows.shadowOf(org.robolectric.RuntimeEnvironment.getApplication().packageManager)
+            .setSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN, false)
+        org.robolectric.Shadows.shadowOf(org.robolectric.RuntimeEnvironment.getApplication().packageManager)
+            .setSystemFeature(android.content.pm.PackageManager.FEATURE_TELEVISION, true)
+    }
+
     private fun set(account: AccountController, name: String, value: Any?) {
         AccountController::class
             .java

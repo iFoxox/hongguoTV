@@ -5,6 +5,26 @@ import org.junit.Test
 
 class DramaFeedTest {
     @Test
+    fun posterBrowseIsSeparateFromPlaybackAndRestoredPerSource() {
+        val state = DramaFeedState()
+        state.append(page(100), 1)
+        state.browsingId = "103"
+        assertEquals("100", state.current?.id)
+        state.select(DramaCategory.COMIC)
+        state.append(page(200), 1)
+        state.browsingId = "204"
+        state.recommend()
+        assertEquals("103", state.browsingId)
+        assertEquals("100", state.current?.id)
+        state.select(DramaCategory.COMIC)
+        assertEquals("204", state.browsingId)
+        state.refresh(resetRecommendations = true)
+        assertNull(state.browsingId)
+        state.recommend()
+        assertNull(state.browsingId)
+    }
+
+    @Test
     fun returningToSourceRestoresCardsSelectionAndPagingButAccountResetClearsAllSources() {
         val state = DramaFeedState()
         state.append(page(100), 1)

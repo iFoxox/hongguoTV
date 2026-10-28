@@ -374,6 +374,36 @@ class ContentRepositoryTest {
         assertEquals(1, calls)
     }
 
+    @Test
+    fun emptyModelRegistersAnAnonymousDeviceOnceAndReusesItForLaterEpisodes() {
+        val requests = mutableListOf<Request>()
+        var registrations = 0
+        val session = PlaybackDeviceSession { registrations++; DeviceRegister.Registered("7654321", "1234567") }
+        val repo = repository(session = session) { request ->
+            requests += request
+            if(requests.size == 1) "" else inlinePlaybackFixture()
+        }
+        assertEquals("720P", repo.stream("123").quality)
+        assertEquals("720P", repo.stream("456").quality)
+        assertEquals(1, registrations)
+        val playerRequests = requests.filter { it.url.encodedPath.contains("multi_video_model") }
+        assertEquals(3, playerRequests.size)
+        playerRequests.forEach {
+            assertEquals("7654321", it.url.queryParameter("device_id"))
+            assertEquals("1234567", it.url.queryParameter("iid"))
+        }
+    }
+
+    @Test
+    fun cancelledPlaybackDoesNotRetryAfterDeviceRegistration() {
+        val scope = RequestScope()
+        var playerCalls = 0
+        val session = PlaybackDeviceSession { scope.cancel(); DeviceRegister.Registered("7654321", "1234567") }
+        val repo = repository(session = session) { playerCalls++; "" }
+        assertThrows(IOException::class.java) { scope.run { repo.stream("123") } }
+        assertEquals(0, playerCalls)
+    }
+
     private fun streamRepository(vararg variants: Triple<Int, String, String>) =
         repository { request ->
             if (request.url.host == "example.com") {
@@ -499,6 +529,7 @@ class ContentRepositoryTest {
 
     private fun repository(
         clock: () -> Long = System::currentTimeMillis,
+        session: PlaybackDeviceSession = PlaybackDeviceSession { DeviceRegister.Registered("333", "444") },
         respond: (Request) -> String,
     ) =
         ContentRepository(
@@ -514,7 +545,7 @@ class ContentRepositoryTest {
                 }
                 .build(),
             clock,
-            PlaybackDeviceSession { DeviceRegister.Registered("333", "444") },
+            session,
         )
 
     private fun rankPayload(page: Int = 1, totalPages: Int = 2) =

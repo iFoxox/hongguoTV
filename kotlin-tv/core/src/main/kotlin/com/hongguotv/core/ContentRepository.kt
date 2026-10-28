@@ -560,12 +560,12 @@ constructor(
 
     private val relatedCache = linkedMapOf<String, List<RelatedWork>>()
 
-    fun related(id: String, force: Boolean = false): List<RelatedWork> {
+    fun related(id: String, force: Boolean = false, includeCurrent: Boolean = false): List<RelatedWork> {
         require(id.matches(Regex("[0-9]{1,30}")))
         if (!force)
             synchronized(relatedCache) {
                 relatedCache[id]?.let {
-                    return it
+                    return if (includeCurrent) it else it.filterNot { work -> work.series.id == id }
                 }
             }
         var failure: Exception? = null
@@ -613,12 +613,12 @@ constructor(
                     failure = IOException("相关作品接口暂无响应")
                     continue
                 }
-                val rows = RelatedWorks.parse(raw, id)
+                val rows = RelatedWorks.parse(raw, id, includeCurrent = true)
                 synchronized(relatedCache) {
                     if (relatedCache.size >= 8) relatedCache.remove(relatedCache.keys.first())
                     relatedCache[id] = rows
                 }
-                return rows
+                return if (includeCurrent) rows else rows.filterNot { it.series.id == id }
             } catch (problem: Exception) {
                 if (Thread.currentThread().isInterrupted) throw problem
                 failure = problem

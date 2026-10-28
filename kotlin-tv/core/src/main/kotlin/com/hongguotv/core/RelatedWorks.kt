@@ -17,7 +17,7 @@ data class RelatedWork(val series: Series, val season: String, val upcoming: Boo
  * are actionable; novels/audio are intentionally excluded.
  */
 object RelatedWorks {
-    fun parse(raw: String, currentId: String): List<RelatedWork> {
+    fun parse(raw: String, currentId: String, includeCurrent: Boolean = false): List<RelatedWork> {
         val root = JSONObject(raw)
         if (root.optInt("code", -1) != 0) throw IOException("相关作品接口暂不可用")
         val cells = root.optJSONArray("data") ?: throw IOException("相关作品数据格式已变化")
@@ -30,7 +30,7 @@ object RelatedWorks {
                 val title = row.str("title")
                 val type = row.optInt("content_type")
                 if (
-                    id == currentId ||
+                    (!includeCurrent && id == currentId) ||
                         !id.matches(Regex("[0-9]{1,30}")) ||
                         title.isBlank() ||
                         type !in listOf(1004, 1007)
@@ -56,6 +56,5 @@ object RelatedWorks {
                 )
             }
             .distinctBy { it.series.id }
-            .take(30)
     }
 }

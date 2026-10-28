@@ -74,7 +74,7 @@ class WebLogin(http: OkHttpClient) {
         val request =
             Request.Builder()
                 .url(url.build())
-                .header("User-Agent", UA)
+                .header("User-Agent", BROWSER_UA)
                 .header("Referer", "$BASE/")
                 .header("Origin", BASE)
                 .header("Accept", "application/json, text/javascript")
@@ -91,7 +91,7 @@ class WebLogin(http: OkHttpClient) {
         if (reply.optString("message") != "success") {
             val code = data.optInt("error_code", -1)
             val message =
-                if (data.has("verify_center_decision_conf")) "红果要求完成滑块验证，请改用扫码登录"
+                if (data.has("verify_center_decision_conf")) "红果要求完成滑块验证，请改用官方网页登录或扫码登录"
                 else data.optString("description").ifBlank { "官网登录失败" }
             throw PhoneLogin.Failure("$message（错误码 $code）", code, code == 1102)
         }
@@ -143,7 +143,7 @@ class WebLogin(http: OkHttpClient) {
                 execute(
                         Request.Builder()
                             .url(url)
-                            .header("User-Agent", UA)
+                            .header("User-Agent", BROWSER_UA)
                             .header("Referer", "$BASE/")
                             .build()
                     )
@@ -201,6 +201,21 @@ class WebLogin(http: OkHttpClient) {
         return credentials()
     }
 
+    /** Only cookies read natively for BASE are accepted; server verification is still mandatory. */
+    fun browserCredentials(header: String): AccountCredentials {
+        require(header.length <= 32768 && '\r' !in header && '\n' !in header) { "网页登录态格式无效" }
+        cookies.clear()
+        val url = BASE.toHttpUrl()
+        header.split(';').map { it.trim() }.filter { it.isNotBlank() }.forEach { part ->
+            val name = part.substringBefore('=')
+            val value = part.substringAfter('=', "")
+            require(name.matches(Regex("[a-zA-Z0-9_\\-]+")) && value.isNotEmpty()) { "网页登录态格式无效" }
+            Cookie.parse(url, "$name=$value; Path=/; Secure; HttpOnly")?.let { cookies += it }
+        }
+        check(hasSession()) { "官网尚未下发登录态，请先在网页完成登录" }
+        return credentials()
+    }
+
     private fun hasSession() =
         cookies.any {
             it.name in listOf("sessionid", "sessionid_ss") &&
@@ -222,8 +237,8 @@ class WebLogin(http: OkHttpClient) {
 
     companion object {
         const val BASE = "https://hongguoduanju.com"
-        private const val UA =
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+        const val BROWSER_UA =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
 
         internal fun mix(value: String) =
             value.toByteArray(Charsets.UTF_8).joinToString("") {

@@ -22,6 +22,19 @@ import org.robolectric.shadows.ShadowLooper
 @Config(sdk = [23, 26], qualifiers = "w960dp-h540dp-land-mdpi")
 @LooperMode(LooperMode.Mode.PAUSED)
 class HomeFeedScreenTest {
+    @org.junit.Before
+    fun useRemoteDevice() {
+        TvStyle.touch = false
+        org.robolectric.Shadows.shadowOf(
+                org.robolectric.RuntimeEnvironment.getApplication().packageManager
+            )
+            .setSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN, false)
+        org.robolectric.Shadows.shadowOf(
+                org.robolectric.RuntimeEnvironment.getApplication().packageManager
+            )
+            .setSystemFeature(android.content.pm.PackageManager.FEATURE_TELEVISION, true)
+    }
+
     private open class Backend(private val count: Int = 2) : FeedBackend {
         private val prepareCount = java.util.concurrent.atomic.AtomicInteger()
         val prepares
@@ -58,7 +71,17 @@ class HomeFeedScreenTest {
 
     private class Playback(activity: Activity) : TrialPlayback {
         override val view = View(activity)
+        private var ready = false
         override var status: ((TrialStatus) -> Unit)? = null
+            set(callback) {
+                field = { value ->
+                    ready = value == TrialStatus.READY
+                    callback?.invoke(value)
+                }
+            }
+
+        override fun canPrefetch() = ready
+
         val queued = mutableMapOf<String, TrialClip>()
         var selections = 0
         var clears = 0
@@ -69,6 +92,7 @@ class HomeFeedScreenTest {
         var released = false
 
         override fun load(clip: TrialClip, position: Long, autoplay: Boolean) {
+            ready = false
             loads++
             queued.clear()
             queued[clip.detail.series.id] = clip
@@ -197,11 +221,14 @@ class HomeFeedScreenTest {
             activity.setContentView(screen)
             screen.start(true, false)
             pump(screen)
+            // B 方案初始焦点在海报墙；以下旧试播快捷键用例先明确聚焦画面。
+            (get(screen, "stage") as View).requestFocus()
             assertEquals("1", player.loaded)
             assertTrue(player.playing)
             // Next metadata may load, but only the current work prepares a video stream.
             assertEquals(1, backend.prepares)
             val stage = get(screen, "stage") as View
+            stage.requestFocus()
             stage.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN))
             pump(screen)
             assertEquals("2", player.loaded)
@@ -216,6 +243,166 @@ class HomeFeedScreenTest {
         }
         assertTrue(player.released)
         assertTrue(backend.closed)
+    }
+
+    @Test
+    fun posterBrowseUpdatesInfoWithoutChangingTrialAndConfirmUsesSelectedWork() {
+        val controller = Robolectric.buildActivity(Activity::class.java).setup()
+        val activity = controller.get()
+        val state = DramaFeedState()
+        val backend = Backend(6)
+        val player = Playback(activity)
+        var watched = ""
+        val screen =
+            HomeFeedScreen(
+                activity,
+                state,
+                listOf(TextView(activity)),
+                { watched = it.id },
+                { _, _ -> },
+                { "账户收藏" },
+                backend,
+                player,
+            )
+        try {
+            activity.setContentView(screen)
+            screen.start(true, false)
+            pump(screen)
+            // B 方案初始焦点在海报墙；以下旧试播快捷键用例先明确聚焦画面。
+            (get(screen, "stage") as View).requestFocus()
+            screen.measure(
+                View.MeasureSpec.makeMeasureSpec(960, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(540, View.MeasureSpec.EXACTLY),
+            )
+            screen.layout(0, 0, 960, 540)
+            val grid = screen.findViewWithTag<android.widget.GridView>("tv-home:posters")
+            assertEquals(3, grid.numColumns)
+            assertEquals(6, grid.adapter.count)
+            grid.onItemSelectedListener!!.onItemSelected(grid, null, 1, 1)
+            assertEquals("1", state.current?.id)
+            assertEquals("2", state.browsingId)
+            assertEquals(1, backend.prepares)
+            assertEquals("1", player.loaded)
+            assertFalse(player.playing)
+            assertEquals("作品2", (get(screen, "title") as TextView).text.toString())
+            texts(screen).first { it.text == "观看全集" }.performClick()
+            assertEquals("2", watched)
+            screen.resume()
+            grid.performItemClick(null, 1, 1)
+            pump(screen)
+            assertEquals("2", player.loaded)
+            assertEquals("2", state.current?.id)
+            assertTrue(player.playing)
+        } finally {
+            screen.close()
+            controller.pause().stop().destroy()
+        }
+    }
+
+    @Test
+    fun posterFooterLabelsRemainReadableInBothThemes() {
+        val previous = TvStyle.mode
+        val controller = Robolectric.buildActivity(Activity::class.java).setup()
+        val activity = controller.get()
+        try {
+            TvStyle.Mode.entries.forEach { mode ->
+                TvStyle.apply(mode)
+                val screen =
+                    HomeFeedScreen(
+                        activity,
+                        DramaFeedState(),
+                        listOf(TextView(activity)),
+                        {},
+                        { _, _ -> },
+                        { "账户收藏" },
+                        Backend(),
+                        Playback(activity),
+                        resumes = {
+                            listOf(HomeFeedScreen.ResumeCard(Series("saved", "已有记录"), "第 2 集", .2f))
+                        },
+                    )
+                try {
+                    listOf("更多作品", "继续观看").forEach { caption ->
+                        val button = texts(screen).first { it.text == caption }
+                        assertTrue(
+                            "$mode / $caption 的文字必须可读",
+                            androidx.core.graphics.ColorUtils.calculateContrast(
+                                button.currentTextColor,
+                                TvStyle.surface,
+                            ) >= 4.5,
+                        )
+                    }
+                } finally {
+                    screen.close()
+                }
+            }
+        } finally {
+            TvStyle.apply(previous)
+            controller.pause().stop().destroy()
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w640dp-h360dp-land-mdpi")
+    fun shortTvKeepsPreviewAndActionsVisibleAndContinueWatchingReachable() {
+        val controller = Robolectric.buildActivity(Activity::class.java).setup()
+        val activity = controller.get()
+        val player = Playback(activity)
+        var continued = ""
+        val entry = Series("saved", "上次的作品")
+        val screen =
+            HomeFeedScreen(
+                activity,
+                DramaFeedState(),
+                listOf(TextView(activity)),
+                {},
+                { _, _ -> },
+                { "登录后加入账户收藏" },
+                Backend(6),
+                player,
+                resumes = { listOf(HomeFeedScreen.ResumeCard(entry, "第 3 集", .5f)) },
+                openResume = { continued = it.id },
+            )
+        try {
+            val shell =
+                android.widget.LinearLayout(activity).apply {
+                    orientation = android.widget.LinearLayout.VERTICAL
+                }
+            shell.addView(
+                TextView(activity).apply { text = "顶部七项菜单" },
+                android.widget.LinearLayout.LayoutParams(-1, 72),
+            )
+            shell.addView(screen, android.widget.LinearLayout.LayoutParams(-1, 0, 1f))
+            activity.setContentView(shell)
+            screen.start(true, false)
+            pump(screen)
+            val decor = activity.window.decorView
+            decor.measure(
+                View.MeasureSpec.makeMeasureSpec(640, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY),
+            )
+            decor.layout(0, 0, 640, 360)
+            assertTrue((get(screen, "stage") as View).height > 40)
+            assertEquals(View.GONE, (get(screen, "intro") as View).visibility)
+            listOf("暂停试播", "观看全集", "登录收藏").forEach { caption ->
+                val button = texts(screen).first { it.text == caption }
+                val visible = android.graphics.Rect()
+                assertTrue(button.getGlobalVisibleRect(visible))
+                assertEquals(button.height, visible.height())
+            }
+            val more = screen.findViewWithTag<TextView>("tv-home:more")
+            val resume = texts(screen).first { it.text == "继续观看" }
+            assertEquals(resume.id, more.nextFocusRightId)
+            assertEquals(more.id, resume.nextFocusLeftId)
+            resume.performClick()
+            val dialog = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog()
+            dialog.listView.performItemClick(null, 0, 0)
+            assertEquals("saved", continued)
+            dialog.dismiss()
+        } finally {
+            screen.close()
+            controller.pause().stop().destroy()
+        }
     }
 
     @Test
@@ -240,6 +427,8 @@ class HomeFeedScreenTest {
             activity.setContentView(screen)
             screen.start(true, false)
             pump(screen)
+            // B 方案初始焦点在海报墙；以下旧试播快捷键用例先明确聚焦画面。
+            (get(screen, "stage") as View).requestFocus()
             assertEquals(1, backend.prepares)
             player.status?.invoke(TrialStatus.READY)
             finishPrefetch(screen)
@@ -303,6 +492,8 @@ class HomeFeedScreenTest {
             activity.setContentView(screen)
             screen.start(true, false)
             pump(screen)
+            // B 方案初始焦点在海报墙；以下旧试播快捷键用例先明确聚焦画面。
+            (get(screen, "stage") as View).requestFocus()
             player.status?.invoke(TrialStatus.READY)
             assertTrue(entered.await(5, TimeUnit.SECONDS))
             val pending = get(screen, "prefetchJob") as Future<*>
@@ -358,6 +549,8 @@ class HomeFeedScreenTest {
             activity.setContentView(screen)
             screen.start(true, false)
             pump(screen)
+            // B 方案初始焦点在海报墙；以下旧试播快捷键用例先明确聚焦画面。
+            (get(screen, "stage") as View).requestFocus()
             player.status?.invoke(TrialStatus.READY)
             assertTrue(entered.await(5, TimeUnit.SECONDS))
             (get(screen, "stage") as View).dispatchKeyEvent(
@@ -398,6 +591,8 @@ class HomeFeedScreenTest {
             activity.setContentView(screen)
             screen.start(true, false)
             pump(screen)
+            // B 方案初始焦点在海报墙；以下旧试播快捷键用例先明确聚焦画面。
+            (get(screen, "stage") as View).requestFocus()
             assertTrue(state.recommendation)
             assertEquals(1, backend.recommendationReads)
             texts(screen).first { it.text == "真人剧" }.performClick()
@@ -442,6 +637,8 @@ class HomeFeedScreenTest {
             activity.setContentView(screen)
             screen.start(true, false)
             pump(screen)
+            // B 方案初始焦点在海报墙；以下旧试播快捷键用例先明确聚焦画面。
+            (get(screen, "stage") as View).requestFocus()
             player.saved = 12345
             texts(screen).first { it.text == "观看全集" }.performClick()
             assertEquals("1", watched)
@@ -497,6 +694,8 @@ class HomeFeedScreenTest {
             activity.setContentView(screen)
             screen.start(true, false)
             pump(screen)
+            // B 方案初始焦点在海报墙；以下旧试播快捷键用例先明确聚焦画面。
+            (get(screen, "stage") as View).requestFocus()
             player.saved = 456
             screen.pause()
             assertFalse(player.playing)

@@ -2,11 +2,11 @@
 package com.hongguotv.nativeapp
 
 import android.content.Context
-import android.graphics.Color
 import android.view.Gravity
 import android.view.View
 import android.widget.*
 import com.hongguotv.core.RelatedWork
+import com.hongguotv.core.Series
 
 /** A remote-friendly, independently loaded strip below the episode grid. */
 internal class RelatedWorksView(
@@ -19,6 +19,8 @@ internal class RelatedWorksView(
 ) : LinearLayout(context) {
     private var refreshButton: TextView? = null
     private val labels = mutableListOf<Pair<RelatedWork, TextView>>()
+    private var focusedSeriesId: String? = null
+    private var restoreFocus = false
 
     private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
 
@@ -26,7 +28,7 @@ internal class RelatedWorksView(
         TextView(context).apply {
             text = value
             textSize = size
-            setTextColor(Color.WHITE)
+            setTextColor(TvStyle.text)
             includeFontPadding = false
         }
 
@@ -37,6 +39,7 @@ internal class RelatedWorksView(
     }
 
     private fun reset(status: String) {
+        restoreFocus = findFocus() != null
         removeAllViews()
         labels.clear()
         val heading =
@@ -49,7 +52,7 @@ internal class RelatedWorksView(
             label("刷新", 15f).apply {
                 id = View.generateViewId()
                 isFocusable = true
-                isFocusableInTouchMode = true
+                isFocusableInTouchMode = !TvStyle.touch
                 setPadding(dp(14), dp(10), dp(14), dp(10))
                 background = TvStyle.card(context, false)
                 setOnFocusChangeListener { view, focused ->
@@ -64,11 +67,12 @@ internal class RelatedWorksView(
         if (status.isNotBlank())
             addView(
                 label(status, 13f).apply {
-                    setTextColor(Color.LTGRAY)
+                    setTextColor(TvStyle.muted)
                     setPadding(0, dp(8), 0, dp(8))
                 }
             )
         upper.takeLast(10).forEach { it.nextFocusDownId = refresh.id }
+        if (restoreFocus) refresh.requestFocus()
     }
 
     fun loading() {
@@ -79,27 +83,33 @@ internal class RelatedWorksView(
         reset("相关作品暂时无法加载，可按刷新重试；当前剧集仍可正常观看。")
     }
 
-    fun show(rows: List<RelatedWork>) {
-        reset(if (rows.isEmpty()) "暂无相关剧集" else "左右选择其他季；待上线作品可预约")
+    fun show(rows: List<RelatedWork>, current: Series? = null) {
+        reset(if (rows.isEmpty()) "暂无相关剧集" else "左右浏览其他季及同 IP 作品 · 上键刷新 · 待上线作品可预约")
         if (rows.isEmpty()) return
+        val ordered = if (current != null) relatedWithCurrent(current, rows) else rows
+        val start = focusedSeriesId?.let { id -> ordered.indexOfFirst { it.series.id == id }.takeIf { it >= 0 } }
+            ?: current?.let { relatedStartIndex(ordered, it.id) } ?: 0
         val scroll =
             HorizontalScrollView(context).apply {
                 isHorizontalScrollBarEnabled = false
                 clipToPadding = false
+                isFocusable = false
             }
         val line = LinearLayout(context).apply { orientation = HORIZONTAL }
         scroll.addView(line)
         addView(scroll)
         val cards =
-            rows.map { work ->
+            ordered.map { work ->
+                val isCurrent = work.series.id == current?.id
                 val card =
                     LinearLayout(context).apply {
                         orientation = VERTICAL
                         id = View.generateViewId()
                         tag = work.series.id
                         isFocusable = true
-                        isFocusableInTouchMode = true
-                        contentDescription = work.series.title + "，" + work.label
+                        isFocusableInTouchMode = !TvStyle.touch
+                        contentDescription = work.series.title + "，" + work.label + if (isCurrent) "，当前作品" else ""
+                        isSelected = isCurrent
                         setPadding(dp(5), dp(5), dp(5), dp(9))
                         background = TvStyle.card(context, false)
                     }
@@ -115,13 +125,19 @@ internal class RelatedWorksView(
                     LayoutParams(-1, -2),
                 )
                 card.addView(label(work.season, 12f))
-                val status = label(if (work.upcoming) reserveLabel(work) else "已上线 · 查看剧集", 12f)
+                val status = label(if (isCurrent) "当前作品" else if (work.upcoming) "待上线 · ${reserveLabel(work)}" else "已上线 · 查看剧集", 12f)
+                if (isCurrent) status.setTextColor(SurfaceStyle.accentText)
                 card.addView(status)
-                labels += work to status
-                card.setOnClickListener { open(work, card) }
+                if (!isCurrent) {
+                    labels += work to status
+                    card.setOnClickListener { open(work, card) }
+                }
                 card.setOnFocusChangeListener { view, focused ->
                     view.background = TvStyle.card(context, focused)
                     if (focused) {
+                        focusedSeriesId = work.series.id
+                        refreshButton?.nextFocusDownId = view.id
+                        upper.takeLast(10).forEach { it.nextFocusDownId = view.id }
                         loadCover(image, work.series.cover)
                         view.requestRectangleOnScreen(
                             android.graphics.Rect(0, 0, view.width, view.height),
@@ -138,13 +154,21 @@ internal class RelatedWorksView(
             card.nextFocusUpId = refreshButton?.id ?: upper.lastOrNull()?.id ?: card.id
             card.nextFocusDownId = card.id
         }
-        refreshButton?.nextFocusDownId = cards.first().id
-        upper.takeLast(10).forEachIndexed { index, view ->
-            view.nextFocusDownId = cards[minOf(index, cards.lastIndex)].id
+        refreshButton?.nextFocusDownId = cards[start].id
+        upper.takeLast(10).forEach { view ->
+            view.nextFocusDownId = cards[start].id
+        }
+        val shouldRestore = restoreFocus
+        restoreFocus = false
+        scroll.post {
+            if (scroll.parent !== this) return@post
+            // 只横向定位，不抢走播放／选集焦点，也不把外层详情页拉到底部。
+            if (findFocus() == null || findFocus() === refreshButton) scroll.scrollTo(cards[start].left, 0)
+            if (shouldRestore && findFocus() === refreshButton) cards[start].requestFocus()
         }
     }
 
     fun refreshLabels() {
-        labels.forEach { (work, view) -> if (work.upcoming) view.text = reserveLabel(work) }
+        labels.forEach { (work, view) -> if (work.upcoming) view.text = "待上线 · ${reserveLabel(work)}" }
     }
 }
