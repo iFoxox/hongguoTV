@@ -540,6 +540,7 @@ class AccountController(private val activity: Activity, private val play: (Cloud
                             android.widget.TextView(activity).apply {
                                 text = "用手机红果 App：我的 → 右上角菜单 → 扫一扫\n扫码后请在手机确认登录"
                                 textSize = 18f
+                                setTextColor(TvStyle.text)
                                 gravity = android.view.Gravity.CENTER
                                 setPadding(0, 12, 0, 0)
                             }

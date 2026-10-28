@@ -115,12 +115,12 @@ internal object SurfaceStyle {
             }
             paint.shader=LinearGradient(0f,area.top,0f,area.bottom,
                 if(pressed) intArrayOf(bottom,top) else intArrayOf(top,bottom),null,Shader.TileMode.CLAMP)
-            paint.alpha=if(enabled) opacity else (opacity*.45f).toInt()
+            paint.alpha=if(enabled || card) opacity else (opacity*.45f).toInt()
             canvas.drawRoundRect(area,radius,radius,paint)
             paint.shader=null
             paint.style=Paint.Style.STROKE; paint.strokeWidth=density*.65f
             paint.color=if(accent) Color.argb(130,255,205,155) else if(dark) Color.rgb(0x43,0x4D,0x5C) else Color.rgb(0xD6,0xDC,0xE5)
-            paint.alpha=if(enabled) opacity else (opacity*.45f).toInt()
+            paint.alpha=if(enabled || card) opacity else (opacity*.45f).toInt()
             canvas.drawRoundRect(area,radius,radius,paint)
             if (!TvStyle.touch && focused && enabled) {
                 // 海报有 4dp 内边距，外侧描边始终露出，避免被子图像盖住。

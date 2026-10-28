@@ -45,6 +45,20 @@ class TvSurfaceStyleTest {
         return paint
     }
 
+    @Test fun modalCardSurfacesStayOpaqueWhenWindowHasNoEnabledState() {
+        val context=RuntimeEnvironment.getApplication()
+        for(mode in TvStyle.Mode.entries) {
+            TvStyle.apply(mode)
+            val surface=SurfaceStyle.surface(context)
+            surface.state=intArrayOf(android.R.attr.state_window_focused)
+            assertEquals(255,lastStroke(surface).alpha)
+            val disabled=TextView(context)
+            SurfaceStyle.button(disabled)
+            disabled.background.state=intArrayOf(android.R.attr.state_window_focused)
+            assertTrue(lastStroke(disabled.background).alpha<255)
+        }
+    }
+
     @Test fun rankingBadgesRemainReadableOnTheirDarkOverlayInBothThemes() {
         val context=RuntimeEnvironment.getApplication()
         for(mode in TvStyle.Mode.entries) {
