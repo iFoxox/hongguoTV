@@ -44,7 +44,10 @@ class MobileHistoryTest {
             assertTrue(tabs[0].isSelected);assertFalse(tabs[1].isSelected)
             val labels=nodes.filterIsInstance<TextView>().map { it.text.toString() }
             assertTrue(labels.contains("还没有观看记录"));assertTrue(labels.contains("去找剧"))
-            assertEquals(2,labels.count { it=="观看历史" }) // 页头和底部导航各一处。
+            assertEquals(1,labels.count { it=="观看历史" }) // 标题由来源按钮替代，只在底部保留栏目名。
+            val shell=nodes.filterIsInstance<MobileCatalogShell>().single()
+            assertTrue(all(shell.headerContent).containsAll(tabs))
+            assertFalse(all(shell.content).any { it is MobileHistoryTabs })
             assertEquals(View.GONE,nodes.filterIsInstance<SeriesPreview>().single().visibility)
             tabs[1].performClick();ShadowLooper.idleMainLooper();layout(root)
             nodes=all(root);tabs=nodes.filterIsInstance<MobileHistoryTabs>().single().tabs

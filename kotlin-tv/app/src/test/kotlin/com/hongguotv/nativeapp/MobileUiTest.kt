@@ -341,10 +341,17 @@ class MobileUiTest {
             override fun pause() {}; override fun resume() {}; override fun restart() {}
             override fun position()=0L; override fun clear() {}; override fun release() {}
         }
-        val nav=(0..6).map { View(c.get()).apply { id=View.generateViewId() } }
-        val feed=HomeFeedScreen(c.get(),state,nav,{}, { _,_ -> },{"登录后加入账户收藏"},backend,playback)
+        val shell=MobileCatalogShell(c.get(),0,{}, {})
+        val feed=HomeFeedScreen(c.get(),state,shell.navigation,{}, { _,_ -> },{"登录后加入账户收藏"},backend,playback,mobileHeader=shell::setHeaderContent)
         try {
-            c.get().setContentView(feed); layout(feed,360,560)
+            shell.content.addView(feed,LinearLayout.LayoutParams(-1,-1))
+            c.get().setContentView(shell); layout(shell,360,640)
+            assertEquals(listOf("推荐","漫剧","真人剧","换一批"),labels(shell.headerContent).map { it.text.toString() })
+            assertFalse(labels(feed).any { it.text=="推荐" || it.text=="换一批" })
+            val scrolling=views(feed).filterIsInstance<ScrollView>().single()
+            scrolling.scrollTo(0,100)
+            assertEquals(0,shell.headerContent.scrollY)
+            assertTrue(labels(shell.headerContent).first { it.text=="推荐" }.isSelected)
             val watch=labels(feed).first { it.text=="观看全集" }
             val favorite=labels(feed).first { it.text=="登录后加入账户收藏" }
             assertEquals(watch.height,favorite.height)
@@ -355,6 +362,10 @@ class MobileUiTest {
             assertFalse(feed.back())
             assertTrue(views(feed).any { it is ScrollView })
             assertFalse(labels(feed).any { it.text.toString().contains("点按画面选择操作") })
+            labels(shell.headerContent).first { it.text=="漫剧" }.performClick()
+            assertEquals(DramaCategory.COMIC,state.category)
+            assertFalse(state.recommendation)
+            assertTrue(labels(shell.headerContent).first { it.text=="漫剧" }.isSelected)
         } finally { feed.close(); c.pause().stop().destroy() }
     }
 }

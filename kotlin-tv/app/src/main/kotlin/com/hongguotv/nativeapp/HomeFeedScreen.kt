@@ -30,6 +30,7 @@ internal class HomeFeedScreen(
     private val resumes: () -> List<ResumeCard> = { emptyList() },
     private val openResume: (Series) -> Unit = {},
     private val cover: (ImageView, String) -> Unit = { _, _ -> },
+    private val mobileHeader: ((View) -> Unit)? = null,
 ) : LinearLayout(activity), Closeable {
 
     /** 继续观看卡片数据：作品、说明行与进度（0—1）。 */
@@ -82,6 +83,7 @@ internal class HomeFeedScreen(
     private val recommendButton: TextView
     private val comicButton: TextView
     private val realButton: TextView
+    private val categoryButtons = mutableListOf<TextView>()
 
     private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
 
@@ -133,8 +135,11 @@ internal class HomeFeedScreen(
         button.setTextColor(if (button.isSelected) TvStyle.accent else TvStyle.text)
         button.setTypeface(null, if (button.isSelected) Typeface.BOLD else Typeface.NORMAL)
         if (TvStyle.touch) {
-            SurfaceStyle.button(button)
-            if (button.isSelected) button.setTextColor(SurfaceStyle.accentText)
+            if (button in categoryButtons) SurfaceStyle.headerTab(button)
+            else {
+                SurfaceStyle.button(button)
+                if (button.isSelected) button.setTextColor(SurfaceStyle.accentText)
+            }
         }
         if (button === watchButton) {
             SurfaceStyle.button(button, accent = true)
@@ -278,16 +283,14 @@ internal class HomeFeedScreen(
                 loadPage(false)
             }
         val typeChoices = listOf(recommendButton, comicButton, realButton, refresh)
+        categoryButtons.addAll(typeChoices)
         typeChoices.forEachIndexed { i, b ->
+            if (TvStyle.touch) mobileHeaderTab(b)
             types.addView(
                 b,
-                lp(0, if (TvStyle.touch) -1 else dp(40)).apply {
+                lp(0, if (TvStyle.touch) -2 else dp(40)).apply {
                     weight = 1f
-                    rightMargin =
-                        dp(
-                            if (TvStyle.touch && i == typeChoices.lastIndex) 0
-                            else if (TvStyle.touch) 4 else 8
-                        )
+                    rightMargin = dp(if (TvStyle.touch) 0 else 8)
                 },
             )
             if (!TvStyle.sideNav) b.nextFocusUpId = resumeCards.firstOrNull()?.id ?: nav.first().id
@@ -501,7 +504,8 @@ internal class HomeFeedScreen(
                     addView(page)
                 }
             addView(scroll, lp(-1, -1))
-            page.addView(types, lp(-1, -2))
+            if (mobileHeader != null) mobileHeader.invoke(types)
+            else page.addView(types, lp(-1, -2))
             page.addView(content, lp(-1, -2))
             page.addView(actions, lp(-1, -2))
             val navigation = LinearLayout(activity)

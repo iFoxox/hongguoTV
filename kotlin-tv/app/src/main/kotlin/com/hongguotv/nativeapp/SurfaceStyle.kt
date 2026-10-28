@@ -2,10 +2,14 @@
 package com.hongguotv.nativeapp
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.*
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.StateListDrawable
 import android.view.View
+import android.widget.TextView
 
 /** TV 与手机共用的冷灰底、纸白卡片和柔和按钮；TV 额外保留清晰的遥控器焦点。 */
 internal object SurfaceStyle {
@@ -29,6 +33,27 @@ internal object SurfaceStyle {
         view.background = SoftSurface(view.context, accent, circle, card=false, selectionFill=highlightSelection)
         view.foreground = null
         view.elevation = 0f
+    }
+
+    /** 顶栏只有选中项着色，保留点击反馈，不把整排分类画成凸起按钮。 */
+    fun headerTab(view: View) {
+        fun shape(color: Int) = GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = 10f * view.resources.displayMetrics.density
+        }
+        val selected = if (dark) Color.rgb(0x50,0x39,0x2B) else Color.rgb(0xFF,0xEA,0xDB)
+        val surface = StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_selected), shape(selected))
+            addState(intArrayOf(android.R.attr.state_focused), shape(raised))
+            addState(intArrayOf(), shape(Color.TRANSPARENT))
+        }
+        view.background = RippleDrawable(ColorStateList.valueOf(raised), surface, shape(Color.WHITE))
+        view.foreground = null
+        view.elevation = 0f
+        if (view is TextView) view.setTextColor(ColorStateList(
+            arrayOf(intArrayOf(android.R.attr.state_selected), intArrayOf()),
+            intArrayOf(accentText, TvStyle.text),
+        ))
     }
 
     fun card(view: View) {

@@ -12,16 +12,12 @@ internal class MobileHistoryTabs(context: Context, account: Boolean, select: (Bo
     val tabs: List<TextView>
     init {
         orientation = HORIZONTAL
-        val density = resources.displayMetrics.density
-        fun dp(n: Int) = (n*density).toInt()
-        setPadding(0,dp(4),0,dp(4))
         tabs = listOf(false,true).map { remote ->
-            mobileButton(context, if(remote) "账户历史" else "本机历史", if(remote) "user" else "history",
+            mobileButton(context, if(remote) "账户历史" else "本机历史", color=
                 if(account==remote) SurfaceStyle.accentText else TvStyle.mobileMuted) { if(account!=remote) select(remote) }.apply {
                 isSelected = account==remote
-                minHeight = dp(48)
-                SurfaceStyle.button(this, highlightSelection=true)
-                addView(this, LayoutParams(0,-1,1f).apply { if(remote) leftMargin=dp(6) else rightMargin=dp(6) })
+                mobileHeaderTab(this)
+                addView(this, LayoutParams(0,-2,1f))
             }
         }
     }

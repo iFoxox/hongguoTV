@@ -21,6 +21,7 @@ internal class RankingScreen(
     private val more: (Series, View) -> Unit,
     private val load: (RankBoard, ((RankSnapshot?, String?) -> Unit)) -> Unit,
 ) : LinearLayout(activity) {
+    val mobileHeader: View?
     private val controls = mutableListOf<TextView>()
     private val heading = label("热播排行榜", 25f)
     private val subtitle = label("", 12f, TvStyle.muted)
@@ -84,10 +85,11 @@ internal class RankingScreen(
                     TvStyle.muted,
                 )
             )
-        addView(title)
+        if (!TvStyle.touch) addView(title)
         val bar = row()
-        // 手机竖屏放不下 4 个榜单与筛选项：榜单按钮改为横向滚动，筛选与刷新固定在右侧。
-        val boards: android.view.ViewGroup = if (TvStyle.touch) MobileChoices(activity,columns=2) else row()
+        // 触屏四榜均在固定顶栏等宽展示；题材与刷新留在内容区。
+        val boards = row()
+        mobileHeader = if (TvStyle.touch) boards else null
         val boardScroll =
             HorizontalScrollView(activity).apply {
                 isHorizontalScrollBarEnabled = false
@@ -109,12 +111,12 @@ internal class RankingScreen(
                         isSelected = state.board == board
                         TvStyle.contentToNav(this, nav[2])
                     }
-            boards.addView(
+            if (TvStyle.touch) {
+                mobileHeaderTab(control)
+                boards.addView(control, params(0).apply { weight = 1f })
+            } else boards.addView(
                 control,
-                params().apply {
-                    width = dp(if (narrow) 76 else 92)
-                    rightMargin = dp(8)
-                },
+                params(dp(if (narrow) 76 else 92)).apply { rightMargin = dp(8) },
             )
             controls += control
         }
@@ -133,7 +135,7 @@ internal class RankingScreen(
             bar.addView(filterButton, params(-2))
             bar.addView(refreshButton, params(-2).apply { leftMargin = dp(8) })
         }
-        if (narrow)
+        if (narrow && !TvStyle.touch)
             controls.forEach {
                 it.textSize = 13f
                 it.setPadding(dp(8), dp(10), dp(8), dp(10))
@@ -158,8 +160,11 @@ internal class RankingScreen(
         RankBoard.entries.forEachIndexed { i, b ->
             controls[i].isSelected = state.board == b
             controls[i].text = b.label + if (!TvStyle.touch && state.isRefreshing(b)) " …" else ""
-            controls[i].setTextColor(if (state.board == b) TvStyle.accent else TvStyle.text)
-            controls[i].background = TvStyle.card(activity,controls[i].hasFocus())
+            if (TvStyle.touch) SurfaceStyle.headerTab(controls[i])
+            else {
+                controls[i].setTextColor(if (state.board == b) TvStyle.accent else TvStyle.text)
+                controls[i].background = TvStyle.card(activity,controls[i].hasFocus())
+            }
         }
         refreshButton.text = if (state.isRefreshing(state.board)) "读取中…" else "刷新"
         heading.text = "${state.board.label}热播榜"
