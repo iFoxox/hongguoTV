@@ -13,9 +13,9 @@ import android.view.View
 import android.view.Window
 import android.widget.*
 
-/** TV 一页 50 集；触屏保留现有 20 集分组。详情与播放选集共用。 */
+/** TV 一页 120 集；触屏保留现有 20 集分组。详情与播放选集共用。 */
 internal object EpisodeGrouping {
-    val size: Int get() = if (TvStyle.touch) 20 else 50
+    val size: Int get() = if (TvStyle.touch) 20 else 120
 }
 
 /** A remote-accessible side panel; selecting a number is the only action that changes episodes. */
@@ -33,19 +33,22 @@ class EpisodePanel(
     private var group = current / EpisodeGrouping.size
     private var focused = current
     private var renderedTvColumns = 0
+    private var focusOnGroups = false
 
     private fun dp(n: Int) = (n * activity.resources.displayMetrics.density).toInt()
 
     private fun panelWidth(): Int = minOf(
-        dp(if (TvStyle.touch) 600 else 520),
-        (activity.resources.displayMetrics.widthPixels * if (TvStyle.touch) 1f else if (activity.resources.configuration.screenWidthDp < TvStyle.NARROW_DP) .94f else .8f).toInt(),
+        dp(if (TvStyle.touch) 600 else 900),
+        (activity.resources.displayMetrics.widthPixels * if (TvStyle.touch) 1f else .94f).toInt(),
     )
+
+    private fun groupWidth() = minOf(dp(148), (panelWidth() * .26f).toInt())
 
     private fun tvColumns(): Int {
         val paint = TextPaint().apply { textSize = 14f * activity.resources.displayMetrics.scaledDensity }
         val digits = "8".repeat(maxOf(4, count.toString().length))
         val minimum = paint.measureText(digits) + dp(12)
-        return ((panelWidth() - dp(28)) / minimum).toInt().coerceIn(1, 10)
+        return ((panelWidth() - dp(40) - groupWidth()) / minimum).toInt().coerceIn(1, 15)
     }
 
     private fun label(value: String, size: Float = 17f) =
@@ -85,16 +88,16 @@ class EpisodePanel(
 
     fun onWindowChanged() {
         if (!dialog.isShowing) return
-        if (!TvStyle.touch && renderedTvColumns != tvColumns()) render()
+        if (!TvStyle.touch && renderedTvColumns != tvColumns()) render(focusOnGroups)
         val phone = activity.resources.configuration.screenWidthDp < TvStyle.NARROW_DP
         dialog.window?.apply {
             setBackgroundDrawableResource(android.R.color.transparent)
-            setGravity(if (TvStyle.touch) Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL else Gravity.END or Gravity.CENTER_VERTICAL)
+            setGravity(if (TvStyle.touch) Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL else Gravity.CENTER)
             if (TvStyle.touch) setDimAmount(.35f)
             attributes =
                 attributes.apply {
                     x =
-                        if (phone) 0
+                        if (!TvStyle.touch || phone) 0
                         else (activity.resources.displayMetrics.widthPixels * .05f).toInt()
                 }
             setLayout(
@@ -152,7 +155,7 @@ class EpisodePanel(
         dialog.setContentView(content)
     }
 
-    private fun render() {
+    private fun render(focusGroup: Boolean = false) {
         if (TvStyle.touch) { renderMobile(); return }
 
         val content =
@@ -161,8 +164,8 @@ class EpisodePanel(
                 setPadding(dp(14), dp(12), dp(14), dp(12))
                 SurfaceStyle.card(this)
             }
-        content.addView(label("选集  /  正在看第 ${current+1} 集", 20f))
-        val actions = LinearLayout(activity)
+        val actions = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
+        actions.addView(label("选集 · 正在看第 ${current+1} 集", 20f), LinearLayout.LayoutParams(0, -2, 1f))
         val close = button("关闭") { dismiss() }
         lateinit var jump: TextView
         jump =
@@ -173,52 +176,53 @@ class EpisodePanel(
                     render()
                 }
             }
-        listOf(close, jump).forEach {
+        listOf(jump, close).forEach {
             actions.addView(
                 it,
-                LinearLayout.LayoutParams(0, -2, 1f).apply {
+                LinearLayout.LayoutParams(-2, -2).apply {
                     setMargins(dp(3), dp(3), dp(3), dp(3))
                 },
             )
         }
         content.addView(actions)
-        val paging = LinearLayout(activity)
-        val previous =
-            button("‹ 上一组") {
-                    group--
-                    focused = group * EpisodeGrouping.size
-                    render()
+        val body = LinearLayout(activity)
+        val groupScroll = ScrollView(activity).apply { isVerticalScrollBarEnabled = false }
+        val groupList = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        groupScroll.addView(groupList)
+        body.addView(groupScroll, LinearLayout.LayoutParams(groupWidth(), -1))
+        val right = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        body.addView(right, LinearLayout.LayoutParams(0, -1, 1f).apply { leftMargin = dp(12) })
+        content.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
+        val groupTabs = mutableListOf<TextView>()
+        var ready = false
+        (0..(count - 1) / EpisodeGrouping.size).forEach { index ->
+            val tab = button("${index * EpisodeGrouping.size + 1}—${minOf((index + 1) * EpisodeGrouping.size, count)}", index == group) {
+                if (group != index) { group = index; focused = group * EpisodeGrouping.size }
+                render()
+            }.apply {
+                textSize = 14f
+                contentDescription = "第 ${index * EpisodeGrouping.size + 1} 至 ${minOf((index + 1) * EpisodeGrouping.size, count)} 集分组"
+            }
+            val paintFocus = tab.onFocusChangeListener
+            tab.setOnFocusChangeListener { view, hasFocus ->
+                paintFocus?.onFocusChange(view, hasFocus)
+                if (hasFocus && ready) {
+                    focusOnGroups = true
+                    if (group != index) {
+                        group = index
+                        focused = group * EpisodeGrouping.size
+                        render(true)
+                    }
                 }
-                .apply {
-                    isEnabled = group > 0
-                    isFocusable = isEnabled
-                    alpha = if (isEnabled) 1f else .4f
-                }
-        val next =
-            button("下一组 ›") {
-                    group++
-                    focused = group * EpisodeGrouping.size
-                    render()
-                }
-                .apply {
-                    isEnabled = (group + 1) * EpisodeGrouping.size < count
-                    isFocusable = isEnabled
-                    alpha = if (isEnabled) 1f else .4f
-                }
-        listOf(previous, next).forEach {
-            paging.addView(
-                it,
-                LinearLayout.LayoutParams(0, -2, 1f).apply {
-                    setMargins(dp(3), dp(3), dp(3), dp(3))
-                },
-            )
+            }
+            groupList.addView(tab, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(4) })
+            groupTabs += tab
         }
-        content.addView(paging)
-        content.addView(label("第 ${group*EpisodeGrouping.size+1}—${minOf((group+1)*EpisodeGrouping.size,count)} 集 / 共 $count 集", 14f))
+        right.addView(label("第 ${group*EpisodeGrouping.size+1}—${minOf((group+1)*EpisodeGrouping.size,count)} 集 / 共 $count 集", 14f))
         val scroll = ScrollView(activity)
         val grid = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         scroll.addView(grid)
-        content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        right.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         val cells = mutableListOf<TextView>()
         val columns = tvColumns()
         renderedTvColumns = columns
@@ -245,7 +249,11 @@ class EpisodePanel(
                 val paintFocus = cell.onFocusChangeListener
                 cell.setOnFocusChangeListener { view, hasFocus ->
                     paintFocus?.onFocusChange(view, hasFocus)
-                    if (hasFocus) focused = index
+                    if (hasFocus) {
+                        focused = index
+                        focusOnGroups = false
+                        groupTabs[group].nextFocusRightId = view.id
+                    }
                 }
                 cell.contentDescription = "第 ${index+1} 集" + when {
                     index == current -> "，当前播放"
@@ -266,30 +274,43 @@ class EpisodePanel(
             grid.addView(row)
         }
         cells.forEachIndexed { i, cell ->
-            cell.nextFocusLeftId = cells[if (i % columns == 0) i else i - 1].id
+            cell.nextFocusLeftId = if (i % columns == 0) groupTabs[group].id else cells[i - 1].id
             cell.nextFocusRightId = cells[if (i % columns == columns - 1 || i == cells.lastIndex) i else i + 1].id
             cell.nextFocusUpId =
-                if (i >= columns) cells[i - columns].id
-                else if (i < (columns + 1) / 2 && previous.isFocusable) previous.id
-                else if (next.isFocusable) next.id else jump.id
+                if (i >= columns) cells[i - columns].id else jump.id
             cell.nextFocusDownId =
                 cells[
                         if (i + columns < cells.size) i + columns
                         else if (i / columns < cells.lastIndex / columns) cells.lastIndex else i]
                     .id
         }
-        previous.nextFocusUpId = close.id
-        next.nextFocusUpId = jump.id
-        previous.nextFocusDownId = cells.first().id
-        next.nextFocusDownId = cells[minOf(columns - 1, cells.lastIndex)].id
-        close.nextFocusDownId = if (previous.isFocusable) previous.id else cells.first().id
-        jump.nextFocusDownId =
-            if (next.isFocusable) next.id else cells[minOf(columns - 1, cells.lastIndex)].id
-        close.nextFocusLeftId = close.id
-        close.nextFocusRightId = jump.id
-        jump.nextFocusLeftId = close.id
-        jump.nextFocusRightId = jump.id
+        val entry = cells[(focused - group * EpisodeGrouping.size).coerceIn(0, cells.lastIndex)]
+        groupTabs.forEachIndexed { index, tab ->
+            tab.nextFocusUpId = groupTabs.getOrNull(index - 1)?.id ?: jump.id
+            tab.nextFocusDownId = groupTabs.getOrNull(index + 1)?.id ?: tab.id
+            tab.nextFocusLeftId = tab.id
+            tab.nextFocusRightId = entry.id
+        }
+        close.nextFocusDownId = entry.id
+        jump.nextFocusDownId = groupTabs[group].id
+        close.nextFocusLeftId = jump.id
+        close.nextFocusRightId = close.id
+        jump.nextFocusLeftId = jump.id
+        jump.nextFocusRightId = close.id
         dialog.setContentView(content)
-        cells[(focused - group * EpisodeGrouping.size).coerceIn(0, cells.lastIndex)].requestFocus()
+        focusOnGroups = focusGroup
+        if (focusGroup) groupTabs[group].requestFocus() else entry.requestFocus()
+        ready = true
+        groupList.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+            override fun onLayoutChange(view: View, left: Int, top: Int, right: Int, bottom: Int,
+                oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int) {
+                groupList.removeOnLayoutChangeListener(this)
+                groupScroll.post {
+                    if (groupScroll.isAttachedToWindow) groupTabs[group].requestRectangleOnScreen(
+                        android.graphics.Rect(0, 0, groupTabs[group].width, groupTabs[group].height), true,
+                    )
+                }
+            }
+        })
     }
 }

@@ -50,7 +50,7 @@ class TvUsabilityTest {
                     .body("""{"code":0,"data":[{"show_type":547,"video_data":[$rows]}]}""".toResponseBody()).build()
             }.build()))
             val current = Series("9", "作品第九季")
-            val data = Detail(current, (1..107).map { "e$it" })
+            val data = Detail(current, (1..247).map { "e$it" })
             library.save(WatchProgress(current, "e25", 24, 12000, 90000, false, 1000))
             set(activity, "detail", data); set(activity, "episodeIndex", 24); set(activity, "group", 0)
             set(activity, "directPlayback", true)
@@ -79,13 +79,13 @@ class TvUsabilityTest {
             assertTrue(texts(root).any { it.text == "当前作品" })
             assertTrue(texts(root).any { it.text == "继续第 25 集" })
             fun episodeCells() = texts(root).filter { it.text.matches(Regex("[0-9]+(?:\n.*)?")) }
-            assertEquals(50,episodeCells().size)
+            assertEquals(120,episodeCells().size)
             texts(root).single { it.text=="下一组 ›" }.performClick()
-            assertEquals(50,episodeCells().size)
-            assertTrue(texts(root).any { it.text.contains("51—100") })
+            assertEquals(120,episodeCells().size)
+            assertTrue(texts(root).any { it.text.contains("121—240") })
             texts(root).single { it.text=="下一组 ›" }.performClick()
             assertEquals(7,episodeCells().size)
-            assertTrue(texts(root).any { it.text.contains("101—107") })
+            assertTrue(texts(root).any { it.text.contains("241—247") })
             assertEquals(24,get(activity,"episodeIndex"))
         } finally { TvStyle.touch = priorTouch; controller.destroy() }
     }

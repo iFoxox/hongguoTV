@@ -12,7 +12,7 @@ internal object InteractionMode {
         AUTO("自动"), MOBILE("手机 / 平板"), TV("TV / 遥控器")
     }
 
-    const val TEST_BUILD = "tv-mobile-M29-episodes50-20261028"
+    const val TEST_BUILD = "tv-mobile-M30-episodes120-tabs-20261028"
     private const val PREFS = "interaction_mode"
     private const val KEY = "mode"
 
