@@ -1,5 +1,7 @@
 # 果映 TV · hongguoTV
 
+本项目 Fork 自 [tsukiyo-zero/hongguoTV](https://github.com/tsukiyo-zero/hongguoTV)，感谢原作者及贡献者的开发与分享。
+
 果映 TV 是一款非官方红果短剧客户端，支持 **Android 手机、平板和 TV**。同一个 APK 会根据设备和屏幕尺寸提供适合触屏或遥控器的界面，支持 Android 6.0 及以上。
 
 ## 手机端功能
