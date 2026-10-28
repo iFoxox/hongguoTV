@@ -26,7 +26,7 @@ internal object AppDialogs {
         val context=popup.context
         val density=context.resources.displayMetrics.density
         fun dp(n:Int)=(n*density).toInt()
-        val accent=if(TvStyle.touch) SurfaceStyle.accentText else TvStyle.accent
+        val accent=SurfaceStyle.accentText
         fun colors(view:View) {
             when(view) {
                 is EditText -> {
@@ -51,7 +51,12 @@ internal object AppDialogs {
             if(view is ViewGroup) for(i in 0 until view.childCount) colors(view.getChildAt(i))
         }
         popup.window?.let { window ->
-            window.setBackgroundDrawable(SurfaceStyle.surface(context))
+            // Window 的 drawable state 可能没有 state_enabled；不能复用会因此降至
+            // 45% 透明度的按钮／卡片表面，否则底图透入后浅色正文会失去对比度。
+            window.setBackgroundDrawable(android.graphics.drawable.GradientDrawable().apply {
+                setColor(SurfaceStyle.surface)
+                cornerRadius=dp(16).toFloat()
+            })
             window.setDimAmount(.32f)
             if(TvStyle.touch) window.setLayout(minOf(dp(560),(context.resources.displayMetrics.widthPixels*.92f).toInt()),-2)
             colors(window.decorView)

@@ -171,7 +171,7 @@ class TvTools(private val activity: Activity) {
                         setPadding(dp(10), dp(10), dp(10), dp(10))
                         contentDescription = value
                         fun paint(focused: Boolean) {
-                            setTextColor(if (index == selected) TvStyle.accent else TvStyle.text)
+                            setTextColor(if (index == selected) SurfaceStyle.accentText else TvStyle.text)
                             isSelected = index == selected
                             background = TvStyle.card(activity,focused)
                         }
@@ -260,7 +260,7 @@ class TvTools(private val activity: Activity) {
                             setTextColor(
                                 android.content.res.ColorStateList(
                                     arrayOf(intArrayOf(android.R.attr.state_focused), intArrayOf()),
-                                    intArrayOf(TvStyle.onAccent, TvStyle.text),
+                                    intArrayOf(SurfaceStyle.onAccent, TvStyle.text),
                                 )
                             )
                             setOnClickListener {

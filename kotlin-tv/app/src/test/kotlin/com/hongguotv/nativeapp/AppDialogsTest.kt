@@ -3,6 +3,9 @@ package com.hongguotv.nativeapp
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import androidx.core.graphics.ColorUtils
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
@@ -27,6 +30,91 @@ class AppDialogsTest {
     }
     @After fun restore() { TvStyle.touch=originalTouch; TvStyle.apply(originalMode) }
     private fun views(view:View):List<View> = listOf(view)+if(view is ViewGroup) (0 until view.childCount).flatMap { views(view.getChildAt(it)) } else emptyList()
+
+    @Test fun windowStaysOpaqueWithoutEnabledStateAndAllTextContrastsInBothModes() {
+        val c=Robolectric.buildActivity(Activity::class.java).setup()
+        try {
+            for(touch in listOf(false,true)) for(mode in TvStyle.Mode.entries) {
+                TvStyle.touch=touch; TvStyle.apply(mode)
+                val content=LinearLayout(c.get())
+                val instructions=TextView(c.get()).apply { text="手机扫码后，用浏览器打开并发送剧名。" }
+                content.addView(instructions)
+                val popup=AppDialogs.builder(c.get()).setTitle("手机输入剧名").setView(content)
+                    .setNegativeButton("关闭",null).setPositiveButton("连接帮助",null).show()
+                try {
+                    ShadowLooper.idleMainLooper()
+                    val background=popup.window!!.decorView.background as GradientDrawable
+                    // 窗口背景不应按控件的禁用态变透明；回归覆盖无 state_enabled 的固件状态。
+                    for(state in listOf(intArrayOf(),intArrayOf(android.R.attr.state_window_focused),intArrayOf(android.R.attr.state_enabled))) {
+                        background.state=state
+                        val fill=Shadows.shadowOf(background).lastSetColor
+                        assertFalse(background.isStateful)
+                        assertEquals("$mode / $touch",255,background.alpha)
+                        assertEquals(255,Color.alpha(fill))
+                        assertEquals(SurfaceStyle.surface,fill)
+                    }
+                    assertEquals(TvStyle.text,instructions.currentTextColor)
+                    for(text in views(popup.window!!.decorView).filterIsInstance<TextView>().filter { it.text.isNotBlank() }) {
+                        assertTrue("$mode / ${text.text}",ColorUtils.calculateContrast(text.currentTextColor,SurfaceStyle.surface)>=4.5)
+                    }
+                    // 异步填入的说明不依赖仅在 onShow 执行一次的递归着色。
+                    content.addView(TextView(c.get()).apply {
+                        text="等待手机连接…"; setTextColor(TvStyle.text)
+                        assertTrue(ColorUtils.calculateContrast(currentTextColor,SurfaceStyle.surface)>=4.5)
+                    })
+                } finally { popup.dismiss() }
+            }
+        } finally { c.pause().stop().destroy() }
+    }
+
+    @Test fun phoneInputInstructionsRemainReadableAfterQrLoadsAsynchronously() {
+        val c=Robolectric.buildActivity(Activity::class.java).setup()
+        val tools=TvTools(c.get())
+        try {
+            TvStyle.touch=false
+            for(mode in TvStyle.Mode.entries) {
+                TvStyle.apply(mode)
+                TvTools::class.java.declaredMethods.single { it.name=="showPhoneInput" }.apply { isAccessible=true }
+                    .invoke(tools,null,{ _:String -> },listOf(LanInputAddress("127.0.0.1","测试局域网")),0)
+                val worker=TvTools::class.java.getDeclaredField("worker").apply { isAccessible=true }
+                    .get(tools) as java.util.concurrent.ExecutorService
+                worker.submit {}.get(5,java.util.concurrent.TimeUnit.SECONDS)
+                ShadowLooper.idleMainLooper()
+                val popup=ShadowAlertDialog.getLatestAlertDialog()
+                val labels=views(popup.window!!.decorView).filterIsInstance<TextView>()
+                assertTrue(labels.any { it.text=="等待手机连接…" })
+                val instructions=labels.single { it.text.contains("二维码有效 5 分钟") }
+                assertTrue(ColorUtils.calculateContrast(instructions.currentTextColor,SurfaceStyle.surface)>=4.5)
+                assertEquals(SurfaceStyle.surface,Shadows.shadowOf(popup.window!!.decorView.background as GradientDrawable).lastSetColor)
+                tools.close()
+            }
+        } finally { tools.destroy(); c.pause().stop().destroy() }
+    }
+
+    @Test fun remoteGridSelectionAndFocusedEpisodeDigitsKeepReadableText() {
+        val c=Robolectric.buildActivity(Activity::class.java).setup()
+        val tools=TvTools(c.get())
+        try {
+            TvStyle.touch=false
+            for(mode in TvStyle.Mode.entries) {
+                TvStyle.apply(mode)
+                tools.chooseGrid("题材",listOf("全部","家庭"),1,null,{})
+                ShadowLooper.idleMainLooper()
+                val popup=ShadowAlertDialog.getLatestAlertDialog()
+                val selected=views(popup.window!!.decorView).filterIsInstance<TextView>().single { it.text=="家庭" }
+                selected.onFocusChangeListener.onFocusChange(selected,true)
+                assertTrue(ColorUtils.calculateContrast(selected.currentTextColor,SurfaceStyle.surface)>=4.5)
+                tools.close()
+                tools.episodePicker(100,0,null,{})
+                ShadowLooper.idleMainLooper()
+                val picker=ShadowAlertDialog.getLatestAlertDialog()
+                val digit=views(picker.window!!.decorView).filterIsInstance<Button>().single { it.text=="1" }
+                val focused=digit.textColors.getColorForState(intArrayOf(android.R.attr.state_focused),0)
+                assertTrue(ColorUtils.calculateContrast(focused,TvStyle.accent)>=4.5)
+                tools.close()
+            }
+        } finally { tools.destroy(); c.pause().stop().destroy() }
+    }
 
     @Test fun accountMenuUsesThePageThemeAndOnlyOffersWebsiteOrQrLogin() {
         val c=Robolectric.buildActivity(Activity::class.java).setup()

@@ -386,7 +386,7 @@ internal class CatalogPosterCard(context: Context) : LinearLayout(context) {
                 (6 * density).toInt(),
                 (3 * density).toInt(),
             )
-            setBackgroundColor(Color.argb(200, 15, 18, 24))
+            setBackgroundColor(Color.argb(230, 15, 18, 24))
             visibility = GONE
         }
     private val title =
@@ -436,7 +436,7 @@ internal class CatalogPosterCard(context: Context) : LinearLayout(context) {
         rank.text = position?.rank?.let { "第 $it 名" }.orEmpty()
         rank.visibility = if (position?.rank != null) VISIBLE else GONE
         rank.setTextColor(
-            if ((position?.rank ?: Int.MAX_VALUE) <= 3) TvStyle.accent else TvStyle.text
+            if ((position?.rank ?: Int.MAX_VALUE) <= 3) TvStyle.accent else Color.WHITE
         )
         contentDescription =
             listOf(

@@ -45,6 +45,23 @@ class TvSurfaceStyleTest {
         return paint
     }
 
+    @Test fun rankingBadgesRemainReadableOnTheirDarkOverlayInBothThemes() {
+        val context=RuntimeEnvironment.getApplication()
+        for(mode in TvStyle.Mode.entries) {
+            TvStyle.apply(mode)
+            val card=CatalogPosterCard(context)
+            for(position in listOf(1,4,50)) {
+                card.show(com.hongguotv.core.Series("1","作品"),com.hongguotv.core.RankPosition(position,"热度"))
+                fun labels(view:View):List<TextView> = (if(view is TextView) listOf(view) else emptyList()) +
+                    if(view is ViewGroup) (0 until view.childCount).flatMap { labels(view.getChildAt(it)) } else emptyList()
+                val rank=labels(card).single { it.text=="第 $position 名" }
+                val overlay=(rank.background as android.graphics.drawable.ColorDrawable).color
+                val brightest=androidx.core.graphics.ColorUtils.compositeColors(overlay,android.graphics.Color.WHITE)
+                assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(rank.currentTextColor,brightest)>=4.5)
+            }
+        }
+    }
+
     @Test
     fun bothThemesShareSurfacesAndTvFocusIsVisibleForButtonsAndGridCards() {
         val context = RuntimeEnvironment.getApplication()
