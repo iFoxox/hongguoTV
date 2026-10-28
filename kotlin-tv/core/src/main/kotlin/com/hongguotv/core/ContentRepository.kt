@@ -23,7 +23,11 @@ internal class MemoryCookies : CookieJar {
 
     // RFC 语义：同名 + 同域 + 同路径的新 Cookie 替换旧值，而不是叠加。
     private fun List<Cookie>.replacedBy(cookies: List<Cookie>) =
-        filter { kept -> cookies.none { it.name == kept.name && it.domain == kept.domain && it.path == kept.path } }
+        filter { kept ->
+                cookies.none {
+                    it.name == kept.name && it.domain == kept.domain && it.path == kept.path
+                }
+            }
             .toMutableList()
             .also { it += cookies }
 
@@ -151,7 +155,11 @@ class ContentHttpException(val statusCode: Int) : IOException("内容请求失�
 
 class SearchSessionExpiredException : IOException("搜索结果已过期，请从第 1 页重新搜索")
 
-class ContentRepository(
+class EmptyPlaybackResponseException : IOException("播放接口暂时返回空响应，请稍后重试")
+
+class ContentRepository
+@JvmOverloads
+constructor(
     val http: OkHttpClient =
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
@@ -160,13 +168,15 @@ class ContentRepository(
             .cookieJar(MemoryCookies())
             .build(),
     private val clock: () -> Long = System::currentTimeMillis,
+    private val playbackSession: PlaybackDeviceSession = PlaybackDeviceSession(),
 ) {
     private val signer = Signer()
 
     // 榜单页偶发被 CDN 软拦截（空响应或挂起到超时）：收紧超时并单次重试，
     // 让整榜失败在最坏约 15 秒内暴露，而不是分钟级的全局超时。
     private val rankHttp: OkHttpClient by lazy {
-        http.newBuilder()
+        http
+            .newBuilder()
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(12, TimeUnit.SECONDS)
             .callTimeout(15, TimeUnit.SECONDS)
@@ -174,38 +184,6 @@ class ContentRepository(
     }
     private val site = "https://hongguoduanju.com"
     private val suggestionWebId = UUID.randomUUID().toString()
-    // Compatibility approach from upstream PR #22. Keep search signing separate.
-    // Identifiers remain stable for this repository's lifetime, including episode changes.
-    private val playerDevice =
-        VendorConstants.device +
-            mapOf(
-                "iid" to newPlayerDeviceId(),
-                "device_id" to newPlayerDeviceId(),
-                "cdid" to UUID.randomUUID().toString(),
-            )
-    // 仅在旧播放请求返回空响应时匿名注册；身份只在此 Repository 的内存中复用。
-    @Volatile private var registeredPlayerDevice: Map<String, String>? = null
-    private val playerRegistrationLock = Any()
-
-    private fun registeredPlayerDevice(): Map<String, String> = synchronized(playerRegistrationLock) {
-        registeredPlayerDevice?.let { return@synchronized it }
-        val body = DeviceRegister.payload(VendorConstants.device)
-        val builder = Request.Builder().url(DeviceRegister.url())
-        DeviceRegister.headers(body, VendorConstants.device).forEach { (key, value) ->
-            builder.header(key, value)
-        }
-        val request = builder.post(body.toRequestBody("application/octet-stream".toMediaType())).build()
-        val registered = RequestScope.execute(http.newCall(request)) { response ->
-            DeviceRegister.parse(cloudResponse(response), response.headers("Set-Cookie"))
-        } ?: throw IOException("播放设备初始化失败")
-        (playerDevice + mapOf("device_id" to registered.deviceId, "iid" to registered.installId))
-            .also { registeredPlayerDevice = it }
-    }
-
-    private fun newPlayerDeviceId() = buildString {
-        append('3')
-        repeat(18) { append(kotlin.random.Random.nextInt(10)) }
-    }
 
     private data class SearchCursor(
         val searchId: String,
@@ -216,12 +194,17 @@ class ContentRepository(
 
     private val searchCursors = linkedMapOf<Triple<ContentType, String, Int>, SearchCursor>()
 
+    private data class UpcomingPlaybackModel(val entry: JSONObject, val savedAt: Long)
+
+    private val upcomingPlaybackModels = linkedMapOf<String, UpcomingPlaybackModel>()
+
     // 构造并执行内容请求，统一检查 HTTP 状态和响应大小；仅按规则重试临时故障。
     private fun text(
         url: String,
         signed: Signer.Request? = null,
         retryTransient: Boolean = false,
         client: OkHttpClient = http,
+        retryEmptyPlayback: Boolean = false,
     ): String {
         val request =
             Request.Builder()
@@ -232,8 +215,22 @@ class ContentRepository(
         signed?.body?.let {
             request.post(it.toRequestBody("application/json; charset=utf-8".toMediaType()))
         }
-        fun fetch() =
-            RequestScope.execute(client.newCall(request.build())) { response ->
+        fun fetch(): String {
+            val next =
+                request.build().let { original ->
+                    if (retryEmptyPlayback)
+                        original
+                            .newBuilder()
+                            .url(
+                                original.url
+                                    .newBuilder()
+                                    .setQueryParameter("_rticket", clock().toString())
+                                    .build()
+                            )
+                            .build()
+                    else original
+                }
+            return RequestScope.execute(client.newCall(next)) { response ->
                 if (!response.isSuccessful) throw ContentHttpException(response.code)
                 val body = response.body ?: throw IOException("内容响应为空")
                 if (body.contentLength() > 16 * 1024 * 1024) throw IOException("内容响应过大")
@@ -247,26 +244,41 @@ class ContentRepository(
                 }
                 val bytes = out.toByteArray()
                 if (bytes.size > 16 * 1024 * 1024) throw IOException("内容响应过大")
-                String(bytes, Charsets.UTF_8)
+                val content = String(bytes, Charsets.UTF_8)
+                if (retryEmptyPlayback && content.isBlank()) throw EmptyPlaybackResponseException()
+                content
             }
-        try {
-            return fetch()
-        } catch (e: IOException) {
-            val temporary =
-                e is java.net.SocketTimeoutException ||
-                    e is java.net.SocketException ||
-                    e is java.net.UnknownHostException ||
-                    (e is ContentHttpException && e.statusCode in setOf(500, 502, 503, 504))
-            if (!retryTransient || !temporary || Thread.currentThread().isInterrupted) throw e
-            // One bounded retry of the same read-only search page; navigation still cancels its
-            // scope.
+        }
+        var retries = 0
+        while (true) {
             try {
-                Thread.sleep(700)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-                throw java.io.InterruptedIOException("请求已取消")
+                return fetch()
+            } catch (e: IOException) {
+                val temporary =
+                    e is EmptyPlaybackResponseException ||
+                        e is java.net.SocketTimeoutException ||
+                        e is java.net.SocketException ||
+                        e is java.net.UnknownHostException ||
+                        (e is ContentHttpException && e.statusCode in setOf(500, 502, 503, 504))
+                val delay =
+                    if (e is EmptyPlaybackResponseException) listOf(700L, 1500L).getOrNull(retries)
+                    else if (retries == 0) 700L else null
+                if (
+                    !retryTransient ||
+                        !temporary ||
+                        delay == null ||
+                        Thread.currentThread().isInterrupted
+                )
+                    throw e
+                // 空响应最多三次读取；连接故障仍只重试一次，不改变搜索、榜单的原有预算。
+                try {
+                    Thread.sleep(delay)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw java.io.InterruptedIOException("请求已取消")
+                }
+                retries++
             }
-            return fetch()
         }
     }
 
@@ -306,11 +318,7 @@ class ContentRepository(
         require(page in 1..100)
         // 榜单走收紧超时的专用客户端并重试一次瞬时失败；ttwid 由内存 Cookie 罐自动携带。
         val body =
-            text(
-                "$site/rank/${board.route}?page=$page",
-                retryTransient = true,
-                client = rankHttp,
-            )
+            text("$site/rank/${board.route}?page=$page", retryTransient = true, client = rankHttp)
         return ComicRank.parse(body, page, board)
     }
 
@@ -650,46 +658,78 @@ class ContentRepository(
     }
 
     /** Every playable rendition of one episode, best tier first; one player-API round trip. */
-    fun streamLadder(id: String): StreamLadder {
+    @JvmOverloads
+    fun streamLadder(id: String, metadataAhead: List<String> = emptyList()): StreamLadder {
         require(id.matches(Regex("[0-9]{1,30}")))
-        val payload =
-            """{"biz_param":{"detail_page_version":0,"device_level":3,"disable_digg_stat":false,"need_all_video_definition":true,"need_mp4_align":false,"use_os_player":false,"use_server_dns":false,"video_platform":1024},"mixed_video_id_map":{"1004":["$id"]}}"""
-                .toByteArray()
-        fun fetch(device: Map<String, String>): String {
-            val query = Signer.encode(device + ("_rticket" to clock().toString()))
-            val playerUrl =
-                "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/?$query"
-            val request =
-                Signer.Request(
-                    playerUrl,
-                    mapOf(
-                        "User-Agent" to
-                            "com.phoenix.read/71532 (Linux; U; Android 9; SM-N9860; Build/PQ3A.190705.10241111;tt-ok/3.12.13.20)",
-                        "Accept" to "application/json; charset=utf-8,application/x-protobuf",
-                    ),
-                    payload,
-                )
-            return text(playerUrl, request)
-        }
-        val currentDevice = registeredPlayerDevice
-        var response = fetch(currentDevice ?: playerDevice)
-        if (response.isBlank() && currentDevice == null) {
-            val registered = try {
-                registeredPlayerDevice()
-            } catch (error: IOException) {
-                throw IOException("播放接口返回空响应，设备初始化失败，请稍后重试", error)
+        require(metadataAhead.size <= 2 && metadataAhead.all { it.matches(Regex("[0-9]{1,30}")) })
+        // 后续模型仅在内存保留 60 秒，领取即移除；失败重试不会反复复用同一个旧地址。
+        val cached =
+            synchronized(upcomingPlaybackModels) {
+                val now = clock()
+                upcomingPlaybackModels.entries.removeAll { now - it.value.savedAt !in 0..60_000 }
+                upcomingPlaybackModels.remove(id)?.entry
             }
-            response = fetch(registered)
-        }
-        if (response.isBlank()) throw IOException("播放接口返回空响应，请稍后重试或更新应用")
-        val data = JSONObject(response)
-        val code = data.optInt("Code", data.optInt("code", 0))
-        if (code != 0) throw IOException("播放接口暂不可用（错误码 $code）")
-        val map = data.optJSONObject("data") ?: throw IOException("播放信息为空")
         val entry =
-            map.optJSONObject(id)
-                ?: map.keys().asSequence().mapNotNull { map.optJSONObject(it) }.firstOrNull()
-                ?: throw IOException("播放信息为空")
+            cached
+                ?: run {
+                    val ids = (listOf(id) + metadataAhead).distinct()
+                    val payload =
+                        """{"biz_param":{"detail_page_version":0,"device_level":3,"disable_digg_stat":false,"need_all_video_definition":true,"need_mp4_align":false,"use_os_player":false,"use_server_dns":false,"video_platform":1024},"mixed_video_id_map":{"1004":${JSONArray(ids)}}}"""
+                            .toByteArray()
+                    val identity = playbackSession.profile(http)
+                    val query = Signer.encode(identity.values + ("_rticket" to clock().toString()))
+                    val playerUrl =
+                        "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/?$query"
+                    val request =
+                        Signer.Request(
+                            playerUrl,
+                            mapOf(
+                                "User-Agent" to
+                                    "com.phoenix.read/71532 (Linux; U; Android 9; SM-N9860; Build/PQ3A.190705.10241111;tt-ok/3.12.13.20)",
+                                "Accept" to "application/json; charset=utf-8,application/x-protobuf",
+                            ) +
+                                if (identity.cookie.isBlank()) emptyMap()
+                                else mapOf("Cookie" to identity.cookie),
+                            payload,
+                        )
+                    // 批量接口同次读取当前集和至多后两集，减少连续手动切集时的播放信息请求。
+                    // 空响应按有界退避恢复；只更新请求时间戳，不轮换设备或账号身份。
+                    val response =
+                        text(playerUrl, request, retryTransient = true, retryEmptyPlayback = true)
+                    val data = JSONObject(response)
+                    val code = data.optInt("Code", data.optInt("code", 0))
+                    if (code != 0) throw IOException("播放接口暂不可用（错误码 $code）")
+                    val map = data.optJSONObject("data") ?: throw IOException("播放信息为空")
+                    val current =
+                        map.optJSONObject(id)
+                            ?: (if (ids.size == 1)
+                                map.keys()
+                                    .asSequence()
+                                    .mapNotNull { map.optJSONObject(it) }
+                                    .firstOrNull()
+                            else null)
+                            ?: throw IOException("播放信息为空")
+                    synchronized(upcomingPlaybackModels) {
+                        ids.drop(1).forEach { next ->
+                            map.optJSONObject(next)
+                                ?.takeIf { row ->
+                                    val model = row.opt("video_model")
+                                    (model is JSONObject ||
+                                        model is String && model.isNotBlank()) &&
+                                        row.toString().toByteArray(Charsets.UTF_8).size <=
+                                            256 * 1024
+                                }
+                                ?.let {
+                                    upcomingPlaybackModels[next] =
+                                        UpcomingPlaybackModel(it, clock())
+                                }
+                        }
+                        while (upcomingPlaybackModels.size > 6) upcomingPlaybackModels.remove(
+                            upcomingPlaybackModels.keys.first()
+                        )
+                    }
+                    current
+                }
         val model = entry.optJSONObject("video_model") ?: JSONObject(entry.str("video_model"))
         // The current model already carries plain media URLs, dimensions and CENC keys.
         // Only use the legacy fallback endpoint when this shape has no usable rendition.

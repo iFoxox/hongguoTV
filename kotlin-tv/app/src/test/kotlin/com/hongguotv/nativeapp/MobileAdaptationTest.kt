@@ -182,10 +182,10 @@ class MobileAdaptationTest {
             assertSame(player,playerField.get(activity))
             assertSame(video,player.video.getChildAt(0))
             texts(player).single { it.text=="横屏全屏" }.performClick()
-            val release=MainActivity::class.java.getDeclaredMethod("releasePlayer",Boolean::class.javaPrimitiveType).apply { isAccessible=true }
-            release.invoke(activity,true) // 重建播放页时保留横屏与原始方向。
+            val release=MainActivity::class.java.getDeclaredMethod("releasePlayer",Boolean::class.javaPrimitiveType,Boolean::class.javaPrimitiveType).apply { isAccessible=true }
+            release.invoke(activity,false,true) // 重建播放页时保留横屏与原始方向。
             assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE,activity.requestedOrientation)
-            release.invoke(activity,false) // 离开播放页必须恢复原始方向。
+            release.invoke(activity,false,false) // 离开播放页必须恢复原始方向。
             assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT,activity.requestedOrientation)
         } finally { controller.pause().stop().destroy() }
     }

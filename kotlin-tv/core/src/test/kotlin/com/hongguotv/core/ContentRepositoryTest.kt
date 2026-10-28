@@ -164,7 +164,7 @@ class ContentRepositoryTest {
     }
 
     @Test
-    fun playbackUsesUnsignedIndependentIdentifiersAndKeepsThemAcrossEpisodes() {
+    fun playbackUsesUnsignedRegisteredIdentifiersAndKeepsThemAcrossEpisodes() {
         val requests = mutableListOf<Request>()
         val repo = repository { request ->
             requests += request
@@ -182,7 +182,7 @@ class ContentRepositoryTest {
             assertTrue(request.header("User-Agent").orEmpty().contains("tt-ok/"))
             for (key in listOf("iid", "device_id")) {
                 val value = request.url.queryParameter(key)!!
-                assertTrue(value.matches(Regex("3[0-9]{18}")))
+                assertEquals(if (key == "iid") "444" else "333", value)
                 assertNotEquals(VendorConstants.device[key], value)
                 assertEquals(requests.first().url.queryParameter(key), value)
             }
@@ -204,30 +204,191 @@ class ContentRepositoryTest {
 
     @Test
     fun emptyPlaybackResponseReportsActionableError() {
-        val repo = repository { "   " }
+        var calls = 0
+        val repo = repository {
+            calls++
+            "   "
+        }
         val error = assertThrows(IOException::class.java) { repo.stream("123") }
         assertTrue(error.message.orEmpty().contains("空响应"))
+        assertFalse(error.message.orEmpty().contains("更新应用"))
+        assertEquals(3, calls)
+    }
+
+    private fun inlinePlaybackFixture(): String =
+        """{"data":{"123":{"video_model":{"video_list":[{"main_url":"https://example.com/video","video_meta":{"definition":"720p","codec_type":"h264","vwidth":720,"vheight":1280},"encrypt_info":{"encrypt":false}}]}}}}"""
+
+    private fun batchPlaybackFixture(ids: List<String>): String {
+        val data = JSONObject()
+        ids.forEach { id ->
+            val entry =
+                JSONObject(inlinePlaybackFixture()).getJSONObject("data").getJSONObject("123")
+            entry
+                .getJSONObject("video_model")
+                .getJSONArray("video_list")
+                .getJSONObject(0)
+                .put("main_url", "https://example.com/video/$id")
+            data.put(id, entry)
+        }
+        return JSONObject().put("data", data).toString()
+    }
+
+    private fun playbackRequestIds(request: Request): List<String> {
+        val body = okio.Buffer().also { request.body!!.writeTo(it) }.readUtf8()
+        val ids = JSONObject(body).getJSONObject("mixed_video_id_map").getJSONArray("1004")
+        return (0 until ids.length()).map { ids.getString(it) }
+    }
+
+    @Test
+    fun batchPlaybackInformationFeedsTheNextTwoEpisodesWithoutAnotherModelRequest() {
+        val requests = mutableListOf<Request>()
+        val repo = repository { request ->
+            requests += request
+            batchPlaybackFixture(playbackRequestIds(request))
+        }
+        assertEquals(
+            "https://example.com/video/123",
+            repo.streamLadder("123", listOf("456", "789")).renditions.single().url,
+        )
+        assertEquals(
+            "https://example.com/video/456",
+            repo.streamLadder("456").renditions.single().url,
+        )
+        assertEquals(
+            "https://example.com/video/789",
+            repo.streamLadder("789").renditions.single().url,
+        )
+        assertEquals(1, requests.size)
+        assertEquals(listOf("123", "456", "789"), playbackRequestIds(requests.single()))
+        // 领取后即移除；重试同一集时必须重新获取，避免反复复用失效地址。
+        repo.streamLadder("456")
+        assertEquals(2, requests.size)
+    }
+
+    @Test
+    fun expiredUpcomingModelIsNotUsedAfterSixtySeconds() {
+        var now = 1000L
+        var calls = 0
+        val repo =
+            repository(clock = { now }) { request ->
+                calls++
+                batchPlaybackFixture(playbackRequestIds(request))
+            }
+        repo.streamLadder("123", listOf("456"))
+        now += 60_001
+        repo.streamLadder("456")
+        assertEquals(2, calls)
+    }
+
+    @Test
+    fun partialBatchFallsBackToIndividualReadingButNeverPlaysAnotherEpisodesModel() {
+        var calls = 0
+        val repo = repository { request ->
+            calls++
+            batchPlaybackFixture(listOf(playbackRequestIds(request).first()))
+        }
+        repo.streamLadder("123", listOf("456"))
+        assertEquals(
+            "https://example.com/video/456",
+            repo.streamLadder("456").renditions.single().url,
+        )
+        assertEquals(2, calls)
+        val missingCurrent = repository { batchPlaybackFixture(listOf("456")) }
+        assertThrows(IOException::class.java) { missingCurrent.streamLadder("123", listOf("456")) }
+    }
+
+    @Test
+    fun twoEmptyModelsRecoverOnTheThirdReadAndStillPrimeTheNextEpisode() {
+        var calls = 0
+        val repo = repository { request ->
+            if (++calls < 3) "" else batchPlaybackFixture(playbackRequestIds(request))
+        }
+        repo.streamLadder("123", listOf("456"))
+        assertEquals(
+            "https://example.com/video/456",
+            repo.streamLadder("456").renditions.single().url,
+        )
+        assertEquals(3, calls)
+    }
+
+    @Test
+    fun playbackModelRecoversFromOneEmptyResponseWithoutChangingRequestIdentity() {
+        val requests = mutableListOf<Request>()
+        var now = 1000L
+        val repo =
+            repository(clock = { now }) { request ->
+                requests += request
+                now += 1000
+                if (requests.size == 1) " \n " else inlinePlaybackFixture()
+            }
+        assertEquals("https://example.com/video", repo.streamLadder("123").renditions.single().url)
+        assertEquals(2, requests.size)
+        assertEquals(
+            requests[0].url.newBuilder().removeAllQueryParameters("_rticket").build(),
+            requests[1].url.newBuilder().removeAllQueryParameters("_rticket").build(),
+        )
+        assertNotEquals(
+            requests[0].url.queryParameter("_rticket"),
+            requests[1].url.queryParameter("_rticket"),
+        )
+        val first = okio.Buffer().also { requests[0].body!!.writeTo(it) }.readUtf8()
+        val second = okio.Buffer().also { requests[1].body!!.writeTo(it) }.readUtf8()
+        assertEquals(first, second)
+        assertEquals("POST", requests[1].method)
+    }
+
+    @Test
+    fun playbackModelRetriesOneTemporaryConnectionFailure() {
+        var calls = 0
+        val repo = repository {
+            if (++calls == 1) throw java.net.SocketTimeoutException("fixture")
+            inlinePlaybackFixture()
+        }
+        assertEquals(720, repo.streamLadder("123").renditions.single().quality)
+        assertEquals(2, calls)
+    }
+
+    @Test
+    fun validPlaybackErrorsAndChangedJsonDoNotTriggerAnInternalRetry() {
+        for (body in listOf("""{"Code":110001}""", "<html>changed response</html>")) {
+            var calls = 0
+            val repo = repository {
+                calls++
+                body
+            }
+            assertThrows(Exception::class.java) { repo.streamLadder("123") }
+            assertEquals(1, calls)
+        }
+    }
+
+    @Test
+    fun cancelledPlaybackScopeDoesNotSendTheEmptyResponseRetry() {
+        val scope = RequestScope()
+        var calls = 0
+        val repo = repository {
+            calls++
+            scope.cancel()
+            ""
+        }
+        assertThrows(IOException::class.java) { scope.run { repo.streamLadder("123") } }
+        assertEquals(1, calls)
     }
 
     @Test
     fun emptyModelRegistersAnAnonymousDeviceOnceAndReusesItForLaterEpisodes() {
         val requests = mutableListOf<Request>()
-        val repo = repository { request ->
+        var registrations = 0
+        val session = PlaybackDeviceSession { registrations++; DeviceRegister.Registered("7654321", "1234567") }
+        val repo = repository(session = session) { request ->
             requests += request
-            when {
-                request.url.encodedPath == "/service/2/device_register/" ->
-                    """{"device_id_str":"7654321","install_id_str":"1234567"}"""
-                request.url.queryParameter("device_id") != "7654321" -> ""
-                else -> """{"data":{"123":{"video_model":{"video_list":[{"main_url":"https://example.com/video","video_meta":{"definition":"720p","codec_type":"h264","vwidth":720,"vheight":1280},"encrypt_info":{"encrypt":false}}]}}}}"""
-            }
+            if(requests.size == 1) "" else inlinePlaybackFixture()
         }
         assertEquals("720P", repo.stream("123").quality)
         assertEquals("720P", repo.stream("456").quality)
-        assertEquals(1, requests.count { it.url.encodedPath == "/service/2/device_register/" })
+        assertEquals(1, registrations)
         val playerRequests = requests.filter { it.url.encodedPath.contains("multi_video_model") }
         assertEquals(3, playerRequests.size)
-        assertNotEquals("7654321", playerRequests.first().url.queryParameter("device_id"))
-        playerRequests.drop(1).forEach {
+        playerRequests.forEach {
             assertEquals("7654321", it.url.queryParameter("device_id"))
             assertEquals("1234567", it.url.queryParameter("iid"))
         }
@@ -237,17 +398,10 @@ class ContentRepositoryTest {
     fun cancelledPlaybackDoesNotRetryAfterDeviceRegistration() {
         val scope = RequestScope()
         var playerCalls = 0
-        val repo = repository { request ->
-            if (request.url.encodedPath == "/service/2/device_register/") {
-                scope.cancel()
-                """{"device_id_str":"7654321","install_id_str":"1234567"}"""
-            } else {
-                playerCalls++
-                ""
-            }
-        }
+        val session = PlaybackDeviceSession { scope.cancel(); DeviceRegister.Registered("7654321", "1234567") }
+        val repo = repository(session = session) { playerCalls++; "" }
         assertThrows(IOException::class.java) { scope.run { repo.stream("123") } }
-        assertEquals(1, playerCalls)
+        assertEquals(0, playerCalls)
     }
 
     private fun streamRepository(vararg variants: Triple<Int, String, String>) =
@@ -375,6 +529,7 @@ class ContentRepositoryTest {
 
     private fun repository(
         clock: () -> Long = System::currentTimeMillis,
+        session: PlaybackDeviceSession = PlaybackDeviceSession { DeviceRegister.Registered("333", "444") },
         respond: (Request) -> String,
     ) =
         ContentRepository(
@@ -390,6 +545,7 @@ class ContentRepositoryTest {
                 }
                 .build(),
             clock,
+            session,
         )
 
     private fun rankPayload(page: Int = 1, totalPages: Int = 2) =
@@ -481,8 +637,7 @@ class ContentRepositoryTest {
     fun rankPageRetriesTransientFailureInsteadOfFailingTheBoard() {
         // CDN 软拦截表现为超时或空响应：同页一次有界重试应恢复读取。
         var calls = 0
-        val repo = repository {
-            _ ->
+        val repo = repository { _ ->
             calls += 1
             if (calls == 1) throw java.net.SocketTimeoutException("stalled stream")
             else currentRank(rankPayload(1, 2))
@@ -495,8 +650,7 @@ class ContentRepositoryTest {
     @Test
     fun rankPageSurfacesPersistentFailureAfterOneRetry() {
         var calls = 0
-        val repo = repository {
-            _ ->
+        val repo = repository { _ ->
             calls += 1
             throw java.net.SocketTimeoutException("still stalled")
         }
