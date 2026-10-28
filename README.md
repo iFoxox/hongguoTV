@@ -1,34 +1,31 @@
 # 果映 TV · hongguoTV
 
-非官方红果短剧客户端，主要维护 Android TV 版，同时提供原生 Mac 客户端 hongguoMac。
+果映 TV 是一款非官方红果短剧客户端，支持 **Android 手机、平板和 TV**。同一个 APK 会根据设备和屏幕尺寸提供适合触屏或遥控器的界面，支持 Android 6.0 及以上。
 
-Android TV 使用 `kotlin-tv/` 中的 Kotlin 原生客户端，支持 **Android 6.0 及以上**。安装一个 APK 即可使用，无需部署 Node 或 Docker；同一个 APK 也可安装在 Android 手机和平板上，界面会按屏幕宽度切换为触屏布局。Mac 客户端独立构建、独立更新。
+## 手机端功能
 
-## 当前版本与开发状态
+- 通过底部导航浏览首页、观看历史、排行榜和个人中心，支持触屏搜索、分类筛选和剧集发现。
+- 首页支持推荐、漫剧和真人剧首集试播；观看历史可在本机与账户记录之间切换。
+- 播放页支持选集、收藏、评论、弹幕和设置，并提供竖屏全屏与横屏全屏。
+- 支持相关作品及前后季浏览，能够识别季数时默认定位到上一季附近。
+- 支持官方网页登录或使用另一台设备扫码登录；账号功能及接口可用性取决于官方服务。
 
-| 内容 | 状态 |
-| --- | --- |
-| 已发布 TV 正式版 | **0.1.11（versionCode 52）**，标签 `kotlin-v0.1.11`，旧包名 `com.hongguotv.native<br/>app` |
-| 当前分支新增内容 | 手机/平板触屏适配、TV 首页布局和相关作品浏览；已实现并完成自动检查 |
-| 稳定分支 | `main`；功能合并、生成测试包和发布 Release 是不同步骤 |
+## 界面预览
 
-下方功能介绍以当前分支实现为准。公开 Release 附件仍是已发布版本，不会因本地代码修改自动更新。
+### TV 首页
 
-## Android TV 下载、安装与更新
+![TV 首页：剧集推荐与首集试播](docs/screenshots/tv-home-current.jpg)
 
-[GitHub TV 0.1.11 下载](https://github.com/tsukiyo-zero/hongguoTV/releases/tag/kotlin-v0.1.11) · [GitCode 发布记录](https://gitcode.com/tsukiyo-zero/hongguoTV/releases)
+### 手机端
 
-正式 TV 安装包通过 GitHub 和 GitCode 双平台发布；**应用内更新读取 GitCode**。首次安装从正式 Release 下载 APK，在电视上确认安装。后续同包名版本可在「设置 → 版本与更新」检查、下载并校验更新包，最后交给 Android 系统确认安装；无需每次手动到 GitHub 下载，也不支持静默安装。
-
-### 旧红果 TV 与新果映 TV
-
-果映 TV 使用新安装标识 `io.github.tsukiyo_zero.guoyingtv`，与旧原生版 `com.hongguotv.nativeapp` 独立，可同时安装。**首次迁移到新包名需单独下载安装，不能通过旧 App 的覆盖更新完成**。当前本地测试包不进入在线更新渠道。
-
-本机数据和登录态不会自动迁移，平台账号需重新登录。底层保留了片单备份/恢复实现，但当前设置页没有接入入口，不能把它作为现成的用户迁移步骤；迁移入口需后续补齐并验证。以后果映 TV 的同包名版本继续使用原签名覆盖更新，保留其本机数据。
-
-仓库名仍为 hongguoTV，Mac 客户端名仍为 hongguoMac。果映 TV 关于页注明项目、作者和非官方身份；图标与横幅来源见 [品牌资源](kotlin-tv/artwork/README.md)。
-
-[构建说明](kotlin-tv/README.md) · [在线更新与发布](kotlin-tv/AUTO_UPDATES.md) · [开发流程](CONTRIBUTING.md)
+<table>
+  <tr><th>首页</th><th>观看历史</th><th>排行榜</th></tr>
+  <tr>
+    <td><img src="docs/screenshots/mobile-home.jpg" alt="手机首页" width="260"></td>
+    <td><img src="docs/screenshots/mobile-history.jpg" alt="手机观看历史" width="260"></td>
+    <td><img src="docs/screenshots/mobile-ranking.jpg" alt="手机排行榜" width="260"></td>
+  </tr>
+</table>
 
 ## TV 功能
 
@@ -84,126 +81,6 @@ Android TV 使用 `kotlin-tv/` 中的 Kotlin 原生客户端，支持 **Android 
 
 本集评论可连续读取，整剧剧评仍为官网公开节选。评论和弹幕均只读，未提供发送、回复或点赞操作；首页首集试播暂未接入评论与弹幕。实现与验收边界见 [评论与弹幕说明](kotlin-tv/SOCIAL.md)。
 
-## TV 品牌与界面预览
-
-当前分支采用 C3 蓝紫渐变图标与「果映 TV」横幅。下面是已接入安装包的品牌资源，**不是运行界面截图**：
-
-![果映 TV 横幅](kotlin-tv/app/src/main/res/drawable-xhdpi/tv_banner.png)
-
-<details>
-<summary>查看旧版实机截图（更名前，部分布局已调整）</summary>
-
-以下截图保留作功能示意，不能代表当前分支的名称、图标和三栏搜索布局。新界面实机截图待用户提供后补充。
-
-### 首页
-
-推荐、漫剧和真人剧的第一集试播；上下换剧、换批、观看全集或收藏。当前分支已进一步优化缓存和首集准备，详见 [首页说明](kotlin-tv/HOME_FEED.md)。
-
-![首页](docs/screenshots/tv-home.png)
-
-### 分类找剧
-
-支持关键词搜索、分类与题材筛选，以及手机扫码输入。
-
-![分类找剧](docs/screenshots/tv-discover.png)
-
-### 排行榜
-
-查看综合、真人剧、漫剧和 AI 剧热播榜，支持榜内题材筛选。榜单读取自动携带站点下发的会话 Cookie 并在瞬时失败时快速重试；四个榜单并行独立加载，切换即时展示会话缓存（10 分钟内零请求，过期后台静默续期），点刷新才强制重拉，全程无模态等待。
-
-![排行榜](docs/screenshots/tv-ranking.png)
-
-### 收藏
-
-本机收藏与账户收藏分开管理，本机收藏支持检查剧集更新。
-
-![收藏](docs/screenshots/tv-favorites.png)
-
-### 观看历史
-
-查看本机或账户观看历史，接着上次的位置继续播放。
-
-![观看历史](docs/screenshots/tv-history.png)
-
-### 账户预约
-
-查看待上线与已上线作品，及时发现预约剧集的上线情况。
-
-![账户预约](docs/screenshots/tv-reservations.png)
-
-### 剧集详情
-
-查看简介、选择集数、管理收藏，浏览相关作品与其他季。
-
-![剧集详情](docs/screenshots/tv-detail.png)
-
-### 播放与选集
-
-支持清晰度、倍速、画面模式、自动连播与定时停止。
-
-![播放界面](docs/screenshots/tv-player.png)
-
-![播放选集](docs/screenshots/tv-episodes.png)
-
-### 评论与弹幕
-
-本集评论支持连续加载，时间轴弹幕可调整字号、速度和密度。
-
-![本集评论](docs/screenshots/tv-comments.png)
-
-![弹幕效果](docs/screenshots/tv-danmaku.png)
-
-### 账户管理
-
-扫码登录红果，管理账号并查看同步状态。
-
-![账户管理](docs/screenshots/tv-account.png)
-
-### 设置
-
-调整播放偏好，检查应用更新。
-
-![设置](docs/screenshots/tv-settings.png)
-
-</details>
-
-## Mac 客户端 hongguoMac
-
-支持 **Apple Silicon（M 系列芯片）、macOS 13 及以上**。解压 ZIP，将 `hongguoMac.app` 拖入「应用程序」即可使用，自带运行环境，无需另外安装 Java。
-
-[Mac 固定发布入口](https://gitcode.com/tsukiyo-zero/hongguoTV/releases/mac-stable) · [Mac 构建、更新与使用说明](desktop-mac/README.md)
-
-- 首页推荐、漫剧和真人剧试播，支持切换作品、换批与下一部首集预加载。
-- 搜索、分类找剧、排行榜、相关作品与前后季浏览。
-- 红果扫码登录、账户收藏、观看历史、预约和正式观看进度同步；另有本机收藏与历史。
-- 全屏播放、选集、清晰度、倍速、自动下一集及断点续播；全屏控制栏空闲后隐藏。
-- 上下方向键切换试播作品，空格播放或暂停，左右方向键快退或快进 10 秒。
-- 本集评论支持下滑连续加载与手动加载更多；整剧剧评提供官网公开节选。支持筛选、排序、复制及打开官方页面。
-
-Mac 登录态保存在本机钥匙串，不随安装包分发。当前使用临时签名，尚未经过 Apple 公证；整剧剧评为官网节选，发送和回复尚未接入。另支持按视频时间同步的真实弹幕，可关闭及失败重试。
-
-### Mac 更新与开发
-
-Mac 与 TV **分别管理版本号和更新清单**。Mac 固定读取 GitCode 同仓库 `mac-stable` Release 中的 `mac-update.json`；每次发布上传新 ZIP 并替换该清单，保持标签不变，**不要将 Mac Release 设为 Latest／最新版**，最新版保留给 TV。Mac 目前下载并校验更新包后，需要手动解压替换应用。
-
-已验证的 Mac 版本纳入 `main`。后续 Mac 开发继续在长期分支 **`feature-mac-client`** 进行，测试通过后按需通过 PR 合并到 `main`，不随每个 Mac 功能另开分支。TV 仍是主要维护版本，Mac 源码位于 `desktop-mac/`。
-
-## 维护资料
-
-TV 正式发布提供统一入口：`python3 scripts/release-tv.py` 只读预演，明确发布时加 `--publish`。自动规划补丁版本和内部版本号，串联版本 PR、一次构建检查、原签名校验、双平台标签与附件发布；中断任务可继续。功能先开发、检查与验收，再按约定创建 PR；当前更名和搜索改动通过功能 PR 审核，尚未正式发布。具体环境、使用与限制见 [应用内更新与发布](kotlin-tv/AUTO_UPDATES.md)。
-
-- [接口、兼容性与排查经验](docs/DEVELOPMENT_NOTES.md)
-- [相关作品和预约实现](kotlin-tv/RELATED_WORKS.md)
-- [第三方声明](kotlin-tv/NOTICE.md)
-
-`android/`、`ios/`、`src/`、`server/` 等保留旧 React Native 与 Node 服务实现，当前原生 APK 不依赖它们。仅维护旧服务时参阅 [旧服务 API](docs/API.md) 和 [旧服务 Docker 部署](docs/DOCKER.md)。
-
-播放前客户端会匿名注册设备，设备身份在当前应用进程内复用，不需要登录或短信；模型空响应会有限重试。手机端调整了图标与文字的整体居中，并统一首页、历史、筛选、榜单及弹窗的同行按钮高度；播放页提供「竖屏全屏」和「横屏全屏」按钮，退出时恢复原方向策略，真实设备效果仍需验收。
-
-手机紧凑布局（M17 调试包）：页头改为 52dp，底部圆形图标区域缩至 40dp，导航整项保持至少 56dp 点击高度；按钮缩小可见表面、字号、图标与内外间距，实际点击区域仍至少 48dp。首页、找剧筛选、榜单、历史、我的及播放操作区采用更紧凑的触屏尺寸，长标签和大字体可换行增高；冷灰、纸白与橙色样式及 TV 布局、遥控器焦点规则保持原有方案。此调试包不递增正式版本；手机实机视觉与官网登录、滑块闭环仍待用户安装验收。
-
 ## 许可证
 
 本项目与红果官方无关联，非官方接口可能随平台变化失效。项目以 [GPL-3.0](LICENSE) 发布；版权及第三方许可证声明予以保留，见 [原生第三方声明](kotlin-tv/NOTICE.md) 和 [旧服务第三方声明](server/vendor/NOTICE.md)。
-
-旧交付报告和历史设计文档已从当前目录清理，需要追溯时可查看 Git 历史。
