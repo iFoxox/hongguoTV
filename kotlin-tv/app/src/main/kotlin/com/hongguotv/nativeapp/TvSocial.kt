@@ -33,6 +33,18 @@ class TvSocial(
     private var commentScope: RequestScope? = null
     private var generation = 0
     private var dialog: Dialog? = null
+    private var commentDialog: Dialog? = null
+    private var settingsDialog: Dialog? = null
+
+    /** 只调整窗口，保留评论游标、滚动位置和设置状态。 */
+    fun onWindowChanged() {
+        commentDialog?.takeIf { it.isShowing }?.let { resizeComments(it) }
+        settingsDialog?.takeIf { it.isShowing }?.window?.setLayout(
+            minOf(dp(440), (activity.resources.displayMetrics.widthPixels * .92f).toInt()),
+            if (TvStyle.touch) (activity.resources.displayMetrics.heightPixels * .9f).toInt() else -2,
+        )
+    }
+
     private var overlay: BulletView? = null
     private var loading = false
     private var failedAt = 0L
@@ -112,6 +124,7 @@ class TvSocial(
     }
 
     fun destroy() {
+        settingsDialog?.dismiss()
         foreground(false)
         worker.shutdownNow()
     }
@@ -160,21 +173,23 @@ class TvSocial(
     private fun button(text: String, action: () -> Unit) =
         label(text).apply {
             isFocusable = true
-            isFocusableInTouchMode = true
+            isFocusableInTouchMode = !TvStyle.touch
             minHeight = dp(48)
+            if (TvStyle.touch) gravity = Gravity.CENTER
+            if (TvStyle.touch) foreground = TvStyle.pressHighlight(activity)
             background = TvStyle.card(activity, false)
             setOnFocusChangeListener { _, focus -> background = TvStyle.card(activity, focus) }
             setOnClickListener { action() }
         }
 
     fun settings(anchor: View) {
-        val d = Dialog(activity)
+        val d = AppDialogs.dialog(activity)
         d.requestWindowFeature(Window.FEATURE_NO_TITLE)
         val body =
             LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(18), dp(12), dp(18), dp(12))
-                setBackgroundColor(TvStyle.background)
+                SurfaceStyle.card(this)
             }
         body.addView(label("弹幕设置", 22f))
         fun option(title: () -> String, action: () -> Unit) {
@@ -218,10 +233,15 @@ class TvSocial(
         )
         body.addView(label("真实时间轴弹幕；无内容时不使用普通评论代替。", 14f))
         body.addView(button("关闭") { d.dismiss() })
-        d.setContentView(body)
-        d.setOnDismissListener { if (anchor.isAttachedToWindow) anchor.requestFocus() }
+        d.setContentView(ScrollView(activity).apply { addView(body) })
+        settingsDialog?.dismiss()
+        settingsDialog = d
+        d.setOnDismissListener {
+            if (settingsDialog === d) settingsDialog = null
+            if (anchor.isAttachedToWindow) anchor.requestFocus()
+        }
         d.show()
-        d.window?.setLayout(dp(440), -2)
+        onWindowChanged()
         body.getChildAt(1).requestFocus()
     }
 
@@ -234,7 +254,7 @@ class TvSocial(
         // The timed read belongs to the old generation as well.
         scope?.cancel()
         loading = false
-        val d = Dialog(activity)
+        val d = AppDialogs.dialog(activity)
         dialog = d
         d.requestWindowFeature(Window.FEATURE_NO_TITLE)
         var cursor = ""
@@ -249,7 +269,7 @@ class TvSocial(
             LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(16), dp(12), dp(16), dp(12))
-                setBackgroundColor(TvStyle.background)
+                SurfaceStyle.card(this)
             }
         body.addView(label("评论与剧评", 22f))
         val tabs = LinearLayout(activity)
@@ -276,7 +296,7 @@ class TvSocial(
                 LinearLayout(activity).apply {
                     orientation = LinearLayout.VERTICAL
                     isFocusable = true
-                    isFocusableInTouchMode = true
+                    isFocusableInTouchMode = !TvStyle.touch
                     setPadding(dp(12), dp(10), dp(12), dp(12))
                     background = TvStyle.card(activity, false)
                     contentDescription = "$author，$content"
@@ -299,7 +319,7 @@ class TvSocial(
             )
             card.setOnClickListener {
                 val expanded =
-                    android.app.AlertDialog.Builder(activity)
+                    AppDialogs.builder(activity)
                         .setTitle(author)
                         .setMessage(emoji.render(content, dp(24).toFloat()))
                         .setPositiveButton("关闭", null)
@@ -399,20 +419,29 @@ class TvSocial(
             disposed = true
             commentScope?.cancel()
             if (dialog === d) dialog = null
+            if (commentDialog === d) commentDialog = null
             if (anchor.isAttachedToWindow) anchor.requestFocus()
         }
         d.show()
-        d.window?.apply {
-            setBackgroundDrawableResource(android.R.color.transparent)
-            setGravity(Gravity.END)
-            setDimAmount(0f)
-            setLayout(
-                minOf(dp(500), (activity.resources.displayMetrics.widthPixels * .65).toInt()),
-                -1,
-            )
-        }
+        commentDialog = d
+        resizeComments(d)
         tabs.getChildAt(0).requestFocus()
         read()
+    }
+
+    private fun resizeComments(d: Dialog) {
+        val phone = activity.resources.configuration.screenWidthDp < TvStyle.NARROW_DP
+        d.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            // 手机从底部弹出接近全宽的评论面板，遥控器仍贴右侧显示。
+            setGravity(if (phone) Gravity.BOTTOM else Gravity.END)
+            setDimAmount(if (phone) .35f else 0f)
+            setLayout(
+                if (phone) (activity.resources.displayMetrics.widthPixels * .96f).toInt()
+                else minOf(dp(500), (activity.resources.displayMetrics.widthPixels * .65).toInt()),
+                if (phone) (activity.resources.displayMetrics.heightPixels * .88f).toInt() else -1,
+            )
+        }
     }
 
     private inner class BulletView : View(activity) {

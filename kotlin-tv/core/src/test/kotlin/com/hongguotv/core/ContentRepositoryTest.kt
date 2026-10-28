@@ -209,6 +209,47 @@ class ContentRepositoryTest {
         assertTrue(error.message.orEmpty().contains("空响应"))
     }
 
+    @Test
+    fun emptyModelRegistersAnAnonymousDeviceOnceAndReusesItForLaterEpisodes() {
+        val requests = mutableListOf<Request>()
+        val repo = repository { request ->
+            requests += request
+            when {
+                request.url.encodedPath == "/service/2/device_register/" ->
+                    """{"device_id_str":"7654321","install_id_str":"1234567"}"""
+                request.url.queryParameter("device_id") != "7654321" -> ""
+                else -> """{"data":{"123":{"video_model":{"video_list":[{"main_url":"https://example.com/video","video_meta":{"definition":"720p","codec_type":"h264","vwidth":720,"vheight":1280},"encrypt_info":{"encrypt":false}}]}}}}"""
+            }
+        }
+        assertEquals("720P", repo.stream("123").quality)
+        assertEquals("720P", repo.stream("456").quality)
+        assertEquals(1, requests.count { it.url.encodedPath == "/service/2/device_register/" })
+        val playerRequests = requests.filter { it.url.encodedPath.contains("multi_video_model") }
+        assertEquals(3, playerRequests.size)
+        assertNotEquals("7654321", playerRequests.first().url.queryParameter("device_id"))
+        playerRequests.drop(1).forEach {
+            assertEquals("7654321", it.url.queryParameter("device_id"))
+            assertEquals("1234567", it.url.queryParameter("iid"))
+        }
+    }
+
+    @Test
+    fun cancelledPlaybackDoesNotRetryAfterDeviceRegistration() {
+        val scope = RequestScope()
+        var playerCalls = 0
+        val repo = repository { request ->
+            if (request.url.encodedPath == "/service/2/device_register/") {
+                scope.cancel()
+                """{"device_id_str":"7654321","install_id_str":"1234567"}"""
+            } else {
+                playerCalls++
+                ""
+            }
+        }
+        assertThrows(IOException::class.java) { scope.run { repo.stream("123") } }
+        assertEquals(1, playerCalls)
+    }
+
     private fun streamRepository(vararg variants: Triple<Int, String, String>) =
         repository { request ->
             if (request.url.host == "example.com") {

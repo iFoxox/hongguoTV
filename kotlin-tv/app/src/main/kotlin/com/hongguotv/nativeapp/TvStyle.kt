@@ -6,15 +6,58 @@ package com.hongguotv.nativeapp
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.view.View
 
 /** Shared native colors and shapes; no blur, bitmap backgrounds or focus animation. */
 object TvStyle {
     enum class Mode { LIGHT, DARK }
 
-    // 宽屏使用飞牛影视式左侧边栏导航，窄屏退回顶部导航；由 MainActivity 按屏宽设置。
+    // 保留历史布局的焦点兼容开关；当前 TV 的所有屏宽统一使用顶部导航。
     var sideNav = false
+
+    // 触屏设备（手机 / 平板）使用触屏版文案与窗口边距；电视遥控器保持原交互。
+    var touch = false
+
+    // 手机竖屏阈值：低于该宽度时纵向堆叠、压缩导航与操作行。
+    const val NARROW_DP = 600
+
+    /** 触屏控件至少 48dp；电视保持现有尺寸。 */
+    fun controlSize(remoteDp: Int) = if (touch) maxOf(48, remoteDp) else remoteDp
+
+    val mobileMuted: Int
+        get() = if (mode == Mode.LIGHT) Color.rgb(0x62, 0x62, 0x6A) else Color.rgb(0xB6, 0xB6, 0xBE)
+
+    fun isNarrow(widthDp: Int) = widthDp < NARROW_DP
+
+    /** 海报墙列数：按可用宽度自适应；手机竖屏 3 列、平板 4 列、电视 6 列。 */
+    fun posterColumns(widthDp: Int): Int =
+        when {
+            widthDp < 520 -> 3
+            widthDp < 900 -> 4
+            else -> 6
+        }
+
+    /** 触屏设备的操作提示与遥控器提示不同，按当前设备选择对应文案。 */
+    fun hint(remoteText: String, touchText: String) = if (touch) touchText else remoteText
+
+    /**
+     * 触屏按压反馈：按下时叠加一层半透明强调色，不做 Ripple 扩散动画。
+     * 静态状态切换即可给出清晰反馈，也避免低端机/无刷新时钟环境下动画帧堆积。
+     */
+    fun pressHighlight(context: Context): Drawable =
+        StateListDrawable().apply {
+            addState(
+                intArrayOf(android.R.attr.state_pressed),
+                GradientDrawable().apply {
+                    setColor(Color.argb(0x33, 0xFF, 0x6B, 0x2C))
+                    cornerRadius = 10 * context.resources.displayMetrics.density
+                },
+            )
+            addState(intArrayOf(), android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+        }
 
     private const val PREFS = "tv_style"
     private const val KEY_MODE = "theme_mode"
@@ -22,17 +65,17 @@ object TvStyle {
     var mode: Mode = Mode.LIGHT
         private set
 
-    var background = Color.rgb(0xF6, 0xF6, 0xF8)
+    var background = Color.rgb(0xE5, 0xE8, 0xEF)
         private set
-    var surface = Color.rgb(0xFF, 0xFF, 0xFF)
+    var surface = Color.rgb(0xFA, 0xFC, 0xFE)
         private set
-    var raised = Color.rgb(0xEC, 0xEC, 0xF0)
+    var raised = Color.rgb(0xEB, 0xEF, 0xF5)
         private set
     var text = Color.rgb(0x1D, 0x1D, 0x1F)
         private set
-    var muted = Color.rgb(0x86, 0x86, 0x8B)
+    var muted = Color.rgb(0x62, 0x62, 0x6A)
         private set
-    var outline = Color.rgb(0xE3, 0xE3, 0xE8)
+    var outline = Color.rgb(0xDF, 0xE3, 0xEA)
         private set
 
     // 橙色与品牌果实的暖橙一致，是全应用唯一强调色。
@@ -50,21 +93,12 @@ object TvStyle {
 
     fun apply(next: Mode) {
         mode = next
-        if (next == Mode.LIGHT) {
-            background = Color.rgb(0xF6, 0xF6, 0xF8)
-            surface = Color.rgb(0xFF, 0xFF, 0xFF)
-            raised = Color.rgb(0xEC, 0xEC, 0xF0)
-            text = Color.rgb(0x1D, 0x1D, 0x1F)
-            muted = Color.rgb(0x86, 0x86, 0x8B)
-            outline = Color.rgb(0xE3, 0xE3, 0xE8)
-        } else {
-            background = Color.rgb(0x14, 0x14, 0x16)
-            surface = Color.rgb(0x1F, 0x1F, 0x23)
-            raised = Color.rgb(0x2A, 0x2A, 0x30)
-            text = Color.rgb(0xF5, 0xF5, 0xF7)
-            muted = Color.rgb(0x98, 0x98, 0x9F)
-            outline = Color.rgb(0x2E, 0x2E, 0x33)
-        }
+        background = SurfaceStyle.background
+        surface = SurfaceStyle.surface
+        raised = SurfaceStyle.raised
+        outline = SurfaceStyle.divider
+        text = if (next == Mode.LIGHT) Color.rgb(0x1D,0x1D,0x1F) else Color.rgb(0xF5,0xF5,0xF7)
+        muted = mobileMuted
     }
 
     /** 切换主题并持久化，返回切换后的模式；界面由调用方重建。 */
@@ -87,12 +121,8 @@ object TvStyle {
             setStroke((2 * context.resources.displayMetrics.density).toInt(), border)
         }
 
-    fun card(context: Context, focused: Boolean) =
-        shape(
-            context,
-            surface,
-            if (focused) accent else outline,
-        )
+    fun card(context: Context, focused: Boolean): Drawable =
+        SurfaceStyle.surface(context, focused = !touch && focused)
 
     /** 导航项指向内容入口：侧栏用右、顶栏用下。 */
     fun navInto(nav: List<View>, entry: View) = navIntoId(nav, entry.id)

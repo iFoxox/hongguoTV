@@ -143,7 +143,7 @@ class HomeScreen(
             id = View.generateViewId()
             tag = "home:refresh"
             isFocusable = true
-            isFocusableInTouchMode = true
+            isFocusableInTouchMode = !TvStyle.touch
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), dp(8), dp(12), dp(8))
             background = shape(false)
@@ -259,7 +259,8 @@ class HomeScreen(
                     label(shelf.title, 16f).apply { setTypeface(null, Typeface.BOLD) },
                     LayoutParams(0, -2, 1f),
                 )
-                heading.addView(label("左右选剧  ·  上下切换分区", 10f, TvStyle.muted))
+                if (!TvStyle.touch)
+                    heading.addView(label("左右选剧  ·  上下切换分区", 10f, TvStyle.muted))
                 block.addView(heading)
                 val horizontal =
                     HorizontalScrollView(context).apply {
@@ -276,10 +277,14 @@ class HomeScreen(
                 block.addView(horizontal)
                 val rowCards = mutableListOf<Card>()
                 fun addCard(entry: Entry?, moreAction: (() -> Unit)? = null) {
+                    // 触屏按屏宽三等分，遥控器沿用 6 列片库宽度。
+                    val screenWidth = resources.displayMetrics.widthPixels
                     val width =
-                        ((resources.displayMetrics.widthPixels * .9f - dp(70)) / 6)
-                            .toInt()
-                            .coerceAtLeast(dp(100))
+                        if (TvStyle.touch) (screenWidth * .9f / 3).toInt()
+                        else
+                            ((screenWidth * .9f - dp(70)) / 6)
+                                .toInt()
+                                .coerceAtLeast(dp(100))
                     val key =
                         if (entry != null) "${shelf.key}:${entry.series.id}"
                         else "${shelf.key}:more"
@@ -289,8 +294,9 @@ class HomeScreen(
                             id = View.generateViewId()
                             tag = key
                             isFocusable = true
-                            isFocusableInTouchMode = true
+                            isFocusableInTouchMode = !TvStyle.touch
                             setPadding(dp(4), dp(4), dp(4), dp(8))
+                            if (TvStyle.touch) foreground = TvStyle.pressHighlight(context)
                             background = shape(false)
                         }
                     val image =
@@ -394,7 +400,7 @@ class HomeScreen(
                     id = View.generateViewId()
                     tag = "home:more"
                     isFocusable = true
-                    isFocusableInTouchMode = true
+                    isFocusableInTouchMode = !TvStyle.touch
                     setPadding(dp(12), dp(12), dp(12), dp(12))
                     background = shape(false)
                     setOnFocusChangeListener { _, f ->

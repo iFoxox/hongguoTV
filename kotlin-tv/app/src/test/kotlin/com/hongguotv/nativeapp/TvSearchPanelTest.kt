@@ -20,6 +20,15 @@ import org.robolectric.shadows.ShadowLooper
 @Config(sdk = [23, 26], qualifiers = "w960dp-h540dp-land-mdpi")
 @LooperMode(LooperMode.Mode.PAUSED)
 class TvSearchPanelTest {
+    @org.junit.Before
+    fun useRemoteDevice() {
+        TvStyle.touch = false
+        org.robolectric.Shadows.shadowOf(org.robolectric.RuntimeEnvironment.getApplication().packageManager)
+            .setSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN, false)
+        org.robolectric.Shadows.shadowOf(org.robolectric.RuntimeEnvironment.getApplication().packageManager)
+            .setSystemFeature(android.content.pm.PackageManager.FEATURE_TELEVISION, true)
+    }
+
     @Test
     @Config(qualifiers = "w640dp-h360dp-land-mdpi")
     fun compactLayoutKeepsResultsWideAndScrollsTheKeyboardInsteadOfHidingControls() {

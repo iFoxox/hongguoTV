@@ -50,15 +50,17 @@ internal class RankingScreen(
             isClickable = true
             gravity = Gravity.CENTER
             setPadding(dp(15), dp(10), dp(15), dp(10))
-            minHeight = dp(42)
+            minHeight = dp(TvStyle.controlSize(42))
+            if (TvStyle.touch) {
+                minimumWidth = dp(48); textSize=13f
+                setPadding(dp(10),dp(6),dp(10),dp(6))
+                isFocusableInTouchMode=false
+            }
+            if (TvStyle.touch) foreground = TvStyle.pressHighlight(activity)
             fun paint() {
                 setTextColor(if (isSelected) TvStyle.accent else TvStyle.text)
-                background =
-                    TvStyle.shape(
-                        activity,
-                        if (isSelected) TvStyle.accentSoft else TvStyle.surface,
-                        if (hasFocus()) TvStyle.accent else android.graphics.Color.TRANSPARENT,
-                    )
+                background = TvStyle.card(context,hasFocus())
+                if(TvStyle.touch) SurfaceStyle.button(this)
             }
             setOnFocusChangeListener { _, _ -> paint() }
             setOnClickListener { action() }
@@ -67,12 +69,31 @@ internal class RankingScreen(
 
     init {
         orientation = VERTICAL
+        val narrow = resources.configuration.screenWidthDp < TvStyle.NARROW_DP
         val title = row().apply { setPadding(0, dp(8), 0, dp(8)) }
         heading.typeface = Typeface.DEFAULT_BOLD
         title.addView(heading, params(0).apply { weight = 1f })
-        title.addView(label("方向键选剧  ·  确定看详情  ·  长按更多", 12f, TvStyle.muted))
+        if (!narrow)
+            title.addView(
+                label(
+                    TvStyle.hint(
+                        "方向键选剧  ·  确定看详情  ·  长按更多",
+                        "点击看详情  ·  长按更多操作",
+                    ),
+                    12f,
+                    TvStyle.muted,
+                )
+            )
         addView(title)
         val bar = row()
+        // 手机竖屏放不下 4 个榜单与筛选项：榜单按钮改为横向滚动，筛选与刷新固定在右侧。
+        val boards: android.view.ViewGroup = if (TvStyle.touch) MobileChoices(activity,columns=2) else row()
+        val boardScroll =
+            HorizontalScrollView(activity).apply {
+                isHorizontalScrollBarEnabled = false
+                isFillViewport = false
+                if (!TvStyle.touch) addView(boards, FrameLayout.LayoutParams(-2, -2))
+            }
         RankBoard.entries.forEach { board ->
             val control =
                 button(board.label) {
@@ -88,22 +109,35 @@ internal class RankingScreen(
                         isSelected = state.board == board
                         TvStyle.contentToNav(this, nav[2])
                     }
-            bar.addView(
+            boards.addView(
                 control,
                 params().apply {
-                    width = dp(92)
+                    width = dp(if (narrow) 76 else 92)
                     rightMargin = dp(8)
                 },
             )
             controls += control
         }
-        bar.addView(View(activity), params(0, 1).apply { weight = 1f })
+        if (TvStyle.touch) addView(boards,params(-1))
+        else bar.addView(boardScroll, params(0).apply { weight = 1f })
         filterButton =
-            button("筛选题材") { chooseTopic() }.apply { TvStyle.contentToNav(this, nav[2]) }
+            button(if (narrow && !TvStyle.touch) "题材" else "筛选题材") { chooseTopic() }
+                .apply { TvStyle.contentToNav(this, nav[2]) }
         refreshButton = button("刷新") { maybeRefresh(state.board, force = true) }
             .apply { TvStyle.contentToNav(this, nav[2]) }
-        bar.addView(filterButton, params(-2))
-        bar.addView(refreshButton, params(-2).apply { leftMargin = dp(8) })
+        if (TvStyle.touch) {
+            val actions=MobileChoices(activity,columns=2)
+            actions.addView(filterButton); actions.addView(refreshButton)
+            addView(actions,params(-1).apply { topMargin=dp(6) })
+        } else {
+            bar.addView(filterButton, params(-2))
+            bar.addView(refreshButton, params(-2).apply { leftMargin = dp(8) })
+        }
+        if (narrow)
+            controls.forEach {
+                it.textSize = 13f
+                it.setPadding(dp(8), dp(10), dp(8), dp(10))
+            }
         controls += filterButton
         controls += refreshButton
         controls.forEachIndexed { i, v ->
@@ -111,7 +145,7 @@ internal class RankingScreen(
             v.nextFocusRightId = controls.getOrNull(i + 1)?.id ?: v.id
         }
         TvStyle.navInto(nav, controls[state.board.ordinal])
-        addView(bar)
+        if (!TvStyle.touch) addView(bar)
         subtitle.setPadding(0, dp(9), 0, dp(9))
         subtitle.maxLines = 2
         addView(subtitle)
@@ -123,16 +157,9 @@ internal class RankingScreen(
     private fun markControls() {
         RankBoard.entries.forEachIndexed { i, b ->
             controls[i].isSelected = state.board == b
-            controls[i].text = b.label + if (state.isRefreshing(b)) " …" else ""
+            controls[i].text = b.label + if (!TvStyle.touch && state.isRefreshing(b)) " …" else ""
             controls[i].setTextColor(if (state.board == b) TvStyle.accent else TvStyle.text)
-            controls[i].background =
-                TvStyle.shape(
-                    activity,
-                    if (state.board == b) TvStyle.accentSoft
-                    else TvStyle.surface,
-                    if (controls[i].hasFocus()) TvStyle.accent
-                    else android.graphics.Color.TRANSPARENT,
-                )
+            controls[i].background = TvStyle.card(activity,controls[i].hasFocus())
         }
         refreshButton.text = if (state.isRefreshing(state.board)) "读取中…" else "刷新"
         heading.text = "${state.board.label}热播榜"
@@ -235,7 +262,11 @@ internal class RankingScreen(
         val list =
             ContinuousCatalogView(
                 activity,
-                6,
+                TvStyle.posterColumns(
+                    (activity.resources.displayMetrics.widthPixels /
+                            activity.resources.displayMetrics.density)
+                        .toInt()
+                ),
                 controls[state.board.ordinal],
                 { item, recycled ->
                     val card = recycled as? CatalogPosterCard ?: CatalogPosterCard(activity)

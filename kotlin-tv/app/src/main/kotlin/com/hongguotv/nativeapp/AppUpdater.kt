@@ -177,7 +177,7 @@ class AppUpdater(private val activity: Activity, private val idle: () -> Boolean
             }
         )
         val next =
-            AlertDialog.Builder(activity)
+            AppDialogs.builder(activity)
                 .setTitle("版本与更新 · ${BuildConfig.VERSION_NAME}")
                 .setView(ScrollView(activity).apply { addView(body) })
                 .setNegativeButton("稍后", null)

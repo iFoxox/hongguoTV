@@ -10,9 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import android.text.InputType
 import android.util.Base64
-import android.widget.EditText
 import android.widget.Toast
 import com.hongguotv.core.*
 import java.security.KeyStore
@@ -123,6 +121,7 @@ class AccountController(private val activity: Activity, private val play: (Cloud
     private var lastProgress: Pair<CloudProgress, Int>? = null
     private var draining = false
     private var dialog: AlertDialog? = null
+    private var webLogin: OfficialWebLogin? = null
     var onHistoryChanged: (() -> Unit)? = null
 
     internal fun recommendationCredentials() = credentials?.takeIf { profile != null }
@@ -357,7 +356,7 @@ class AccountController(private val activity: Activity, private val play: (Cloud
     }
 
     val showing
-        get() = dialog?.isShowing == true
+        get() = dialog?.isShowing == true || webLogin?.isShowing == true
 
     init {
         val token = generation
@@ -405,25 +404,37 @@ class AccountController(private val activity: Activity, private val play: (Cloud
             return
         }
         val signed = credentials != null
+        // 手机优先使用官网完成验证码和人工验证；电视保留扫码主入口。
+        val qrAvailable = !TvStyle.touch
         val choices =
             if (signed) arrayOf("云端继续观看（最近 50 部）", "刷新账号和云端记录", "退出红果账号")
-            else arrayOf("使用红果 App 扫码登录", "手机号 + 验证码登录")
+            else if (qrAvailable) arrayOf("使用红果 App 扫码登录")
+            else arrayOf("官方网页登录", "另一台设备扫码登录")
+        val choose = android.content.DialogInterface.OnClickListener { _, index ->
+            if (!signed) {
+                if (qrAvailable) {
+                    qrLogin()
+                } else when (index) {
+                    0 -> officialWebLogin()
+                    1 -> qrLogin()
+                }
+            } else
+                when (index) {
+                    0 -> showHistory()
+                    1 -> refresh(true)
+                    2 -> logout()
+                }
+        }
         showDialog(
-            AlertDialog.Builder(activity)
-                .setTitle(profile?.let { "红果账号 · ${it.nickname}" } ?: "红果账号（测试功能）")
-                .setItems(choices) { _, index ->
-                    if (!signed) {
-                        if (index == 0) qrLogin() else phone()
-                    } else
-                        when (index) {
-                            0 -> showHistory()
-                            1 -> refresh(true)
-                            2 -> logout()
-                        }
+            AppDialogs.builder(activity)
+                .setTitle(profile?.let { "红果账号 · ${it.nickname}" } ?: "红果账号")
+                .apply {
+                    if (!signed && TvStyle.touch) setAdapter(MobileAccountChoices(activity,choices),choose)
+                    else setItems(choices,choose)
                 }
                 .setNeutralButton("同步状态") { _, _ ->
                     showDialog(
-                        AlertDialog.Builder(activity)
+                        AppDialogs.builder(activity)
                             .setTitle("账号同步状态")
                             .setMessage(
                                 "$status\n\n登录后，电视播放的进度会自动上传。手机记录可从「云端继续观看」打开。平台接口可能变化，首次使用请对照手机核对集数和时间。\n本机历史与云端记录分别保留；退出登录会停止上传。"
@@ -435,79 +446,38 @@ class AccountController(private val activity: Activity, private val play: (Cloud
         )
     }
 
-    private fun input(
-        title: String,
-        numeric: Boolean,
-        error: String? = null,
-        submit: (String) -> Unit,
-    ) {
-        val field =
-            EditText(activity).apply {
-                isSingleLine = true
-                inputType = if (numeric) InputType.TYPE_CLASS_NUMBER else InputType.TYPE_CLASS_PHONE
-            }
-        val builder =
-            AlertDialog.Builder(activity)
-                .setTitle(title)
-                .setView(field)
-                .setNegativeButton("取消", null)
-                .setPositiveButton("确认", null)
-        if (error != null) builder.setMessage(error)
-        showDialog(builder)
-        dialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
-            val value = field.text.toString().trim()
-            if (value.isBlank()) return@setOnClickListener
-            dialog?.dismiss()
-            submit(value)
-        }
-    }
-
-    private fun phone() {
-        input("手机号（确认后发送登录验证码）", false) { raw ->
-            val mobile =
-                runCatching { PhoneLogin.parse(raw) }
-                    .getOrElse {
-                        toast(safeError(it))
-                        return@input
-                    }
-            val login = WebLogin(http)
-            task(
-                { login.send(mobile) },
-                { sent -> code(login, sent.maskedMobile) },
-                { failure ->
-                    showDialog(
-                        AlertDialog.Builder(activity)
-                            .setTitle("短信登录未完成")
-                            .setMessage(safeError(failure))
-                            .setPositiveButton("改用扫码") { _, _ -> qrLogin() }
-                            .setNegativeButton("返回", null)
-                    )
-                },
-            )
-        }
-    }
-
-    private fun code(login: WebLogin, masked: String, error: String? = null) {
-        input("输入发送至 $masked 的验证码", true, error) { value ->
-            if (!value.matches(Regex("[0-9]{4,8}"))) {
-                code(login, masked, "请输入 4—8 位验证码")
-                return@input
-            }
-            task(
-                { validateAccount(login.verify(value)).also { store.save(it.first) } },
-                { (next, account) -> acceptAccount(next, account) },
-                { failure ->
-                    if (failure is PhoneLogin.Failure && !failure.canRetryCode) {
-                        showDialog(
-                            AlertDialog.Builder(activity)
-                                .setTitle("登录未完成")
-                                .setMessage(safeError(failure))
-                                .setPositiveButton("返回账号页") { _, _ -> show() }
-                                .setNeutralButton("改用扫码") { _, _ -> qrLogin() }
-                        )
-                    } else code(login, masked, safeError(failure))
-                },
-            )
+    private fun officialWebLogin() {
+        if (closed || busy) return
+        dialog?.dismiss()
+        webLogin?.dismiss()
+        try {
+            lateinit var page: OfficialWebLogin
+            page = OfficialWebLogin(activity, complete = { header ->
+                if (busy || closed || webLogin !== page) return@OfficialWebLogin
+                page.checking()
+                val login = WebLogin(http)
+                task(
+                    { validateAccount(login.browserCredentials(header)) },
+                    { account ->
+                        // 关闭/销毁页面后到达的验证结果不得保存或恢复账户。
+                        if (webLogin === page && page.isShowing) {
+                            page.dismiss()
+                            task(
+                                { store.save(account.first); account },
+                                { acceptAccount(it.first, it.second) },
+                                { toast("登录状态保存失败，请重新登录") },
+                            )
+                        }
+                    },
+                    { error -> if (webLogin === page) page.showError(safeError(error)) },
+                )
+            }, dismissed = { if (webLogin === page) webLogin = null })
+            webLogin = page
+            page.show()
+        } catch (_: Exception) {
+            webLogin?.dismiss()
+            webLogin = null
+            toast("无法打开官方登录页，请更新 Android System WebView 后重试")
         }
     }
 
@@ -576,7 +546,7 @@ class AccountController(private val activity: Activity, private val play: (Cloud
                         )
                     }
                 showDialog(
-                    AlertDialog.Builder(activity)
+                    AppDialogs.builder(activity)
                         .setTitle("红果官方扫码登录")
                         .setView(panel)
                         .setNegativeButton("取消", null)
@@ -611,7 +581,7 @@ class AccountController(private val activity: Activity, private val play: (Cloud
                         closeQr()
                         status = "二维码已过期，请重新扫码"
                         showDialog(
-                            AlertDialog.Builder(activity)
+                            AppDialogs.builder(activity)
                                 .setTitle("二维码已过期")
                                 .setMessage("请刷新二维码，再用手机红果 App 扫码确认。")
                                 .setPositiveButton("刷新二维码") { _, _ -> qrLogin() }
@@ -638,7 +608,7 @@ class AccountController(private val activity: Activity, private val play: (Cloud
                                             { acceptAccount(it.first, it.second) },
                                             { failure ->
                                                 showDialog(
-                                                    AlertDialog.Builder(activity)
+                                                    AppDialogs.builder(activity)
                                                         .setTitle("登录状态保存失败")
                                                         .setMessage(safeError(failure))
                                                         .setPositiveButton("重新扫码") { _, _ ->
@@ -656,7 +626,7 @@ class AccountController(private val activity: Activity, private val play: (Cloud
                                     closeQr()
                                     status = safeError(it)
                                     showDialog(
-                                        AlertDialog.Builder(activity)
+                                        AppDialogs.builder(activity)
                                             .setTitle("扫码登录未完成")
                                             .setMessage(status)
                                             .setPositiveButton("重新扫码") { _, _ -> qrLogin() }
@@ -727,7 +697,7 @@ class AccountController(private val activity: Activity, private val play: (Cloud
         }
         val snapshot = history
         showDialog(
-            AlertDialog.Builder(activity)
+            AppDialogs.builder(activity)
                 .setTitle("云端继续观看")
                 .setItems(
                     snapshot
@@ -813,6 +783,8 @@ class AccountController(private val activity: Activity, private val play: (Cloud
         closed = true
         generation++
         pending = null
+        webLogin?.dismiss()
+        webLogin = null
         dialog?.dismiss()
         http.dispatcher.cancelAll()
         worker.execute {

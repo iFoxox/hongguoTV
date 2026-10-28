@@ -21,6 +21,10 @@ import org.robolectric.shadows.ShadowLooper
 @LooperMode(LooperMode.Mode.PAUSED)
 @GraphicsMode(GraphicsMode.Mode.LEGACY)
 class DiscoveryScreenTest {
+    private var previousTouch=false
+    @org.junit.Before fun useRemoteLayout() { previousTouch=TvStyle.touch; TvStyle.touch=false }
+    @org.junit.After fun restoreLayout() { TvStyle.touch=previousTouch }
+
     private fun layout(view: View) {
         view.measure(
             View.MeasureSpec.makeMeasureSpec(960, View.MeasureSpec.EXACTLY),

@@ -183,6 +183,24 @@ class ContentRepository(
                 "device_id" to newPlayerDeviceId(),
                 "cdid" to UUID.randomUUID().toString(),
             )
+    // 仅在旧播放请求返回空响应时匿名注册；身份只在此 Repository 的内存中复用。
+    @Volatile private var registeredPlayerDevice: Map<String, String>? = null
+    private val playerRegistrationLock = Any()
+
+    private fun registeredPlayerDevice(): Map<String, String> = synchronized(playerRegistrationLock) {
+        registeredPlayerDevice?.let { return@synchronized it }
+        val body = DeviceRegister.payload(VendorConstants.device)
+        val builder = Request.Builder().url(DeviceRegister.url())
+        DeviceRegister.headers(body, VendorConstants.device).forEach { (key, value) ->
+            builder.header(key, value)
+        }
+        val request = builder.post(body.toRequestBody("application/octet-stream".toMediaType())).build()
+        val registered = RequestScope.execute(http.newCall(request)) { response ->
+            DeviceRegister.parse(cloudResponse(response), response.headers("Set-Cookie"))
+        } ?: throw IOException("播放设备初始化失败")
+        (playerDevice + mapOf("device_id" to registered.deviceId, "iid" to registered.installId))
+            .also { registeredPlayerDevice = it }
+    }
 
     private fun newPlayerDeviceId() = buildString {
         append('3')
@@ -534,12 +552,12 @@ class ContentRepository(
 
     private val relatedCache = linkedMapOf<String, List<RelatedWork>>()
 
-    fun related(id: String, force: Boolean = false): List<RelatedWork> {
+    fun related(id: String, force: Boolean = false, includeCurrent: Boolean = false): List<RelatedWork> {
         require(id.matches(Regex("[0-9]{1,30}")))
         if (!force)
             synchronized(relatedCache) {
                 relatedCache[id]?.let {
-                    return it
+                    return if (includeCurrent) it else it.filterNot { work -> work.series.id == id }
                 }
             }
         var failure: Exception? = null
@@ -587,12 +605,12 @@ class ContentRepository(
                     failure = IOException("相关作品接口暂无响应")
                     continue
                 }
-                val rows = RelatedWorks.parse(raw, id)
+                val rows = RelatedWorks.parse(raw, id, includeCurrent = true)
                 synchronized(relatedCache) {
                     if (relatedCache.size >= 8) relatedCache.remove(relatedCache.keys.first())
                     relatedCache[id] = rows
                 }
-                return rows
+                return if (includeCurrent) rows else rows.filterNot { it.series.id == id }
             } catch (problem: Exception) {
                 if (Thread.currentThread().isInterrupted) throw problem
                 failure = problem
@@ -637,20 +655,32 @@ class ContentRepository(
         val payload =
             """{"biz_param":{"detail_page_version":0,"device_level":3,"disable_digg_stat":false,"need_all_video_definition":true,"need_mp4_align":false,"use_os_player":false,"use_server_dns":false,"video_platform":1024},"mixed_video_id_map":{"1004":["$id"]}}"""
                 .toByteArray()
-        val query = Signer.encode(playerDevice + ("_rticket" to clock().toString()))
-        val playerUrl =
-            "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/?$query"
-        val request =
-            Signer.Request(
-                playerUrl,
-                mapOf(
-                    "User-Agent" to
-                        "com.phoenix.read/71532 (Linux; U; Android 9; SM-N9860; Build/PQ3A.190705.10241111;tt-ok/3.12.13.20)",
-                    "Accept" to "application/json; charset=utf-8,application/x-protobuf",
-                ),
-                payload,
-            )
-        val response = text(playerUrl, request)
+        fun fetch(device: Map<String, String>): String {
+            val query = Signer.encode(device + ("_rticket" to clock().toString()))
+            val playerUrl =
+                "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/?$query"
+            val request =
+                Signer.Request(
+                    playerUrl,
+                    mapOf(
+                        "User-Agent" to
+                            "com.phoenix.read/71532 (Linux; U; Android 9; SM-N9860; Build/PQ3A.190705.10241111;tt-ok/3.12.13.20)",
+                        "Accept" to "application/json; charset=utf-8,application/x-protobuf",
+                    ),
+                    payload,
+                )
+            return text(playerUrl, request)
+        }
+        val currentDevice = registeredPlayerDevice
+        var response = fetch(currentDevice ?: playerDevice)
+        if (response.isBlank() && currentDevice == null) {
+            val registered = try {
+                registeredPlayerDevice()
+            } catch (error: IOException) {
+                throw IOException("播放接口返回空响应，设备初始化失败，请稍后重试", error)
+            }
+            response = fetch(registered)
+        }
         if (response.isBlank()) throw IOException("播放接口返回空响应，请稍后重试或更新应用")
         val data = JSONObject(response)
         val code = data.optInt("Code", data.optInt("code", 0))

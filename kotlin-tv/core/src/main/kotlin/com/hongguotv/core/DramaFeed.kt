@@ -16,6 +16,7 @@ class DramaFeedState {
         val page: Int,
         val hasMore: Boolean,
         val offset: Int,
+        val browsingId: String?,
     )
 
     private val sourcePages = mutableMapOf<String, SourcePage>()
@@ -43,6 +44,8 @@ class DramaFeedState {
     var position = 0L
     var userPaused = false
     var ended = false
+    // TV 海报浏览与实际试播索引分离；详情返回、来源切换时恢复海报位置。
+    var browsingId: String? = null
     var offset = 0
         private set
 
@@ -55,7 +58,7 @@ class DramaFeedState {
     private fun rememberSource() {
         sourceCursors[sourceKey()] = recommendationCursor
         if (items.isNotEmpty())
-            sourcePages[sourceKey()] = SourcePage(items, index, page, hasMore, offset)
+            sourcePages[sourceKey()] = SourcePage(items, index, page, hasMore, offset, browsingId)
     }
 
     private fun restoreSource() {
@@ -70,6 +73,7 @@ class DramaFeedState {
         page = saved.page
         hasMore = saved.hasMore
         offset = saved.offset
+        browsingId = saved.browsingId
         resetPlayback()
     }
 
@@ -93,6 +97,7 @@ class DramaFeedState {
         page = 0
         hasMore = true
         offset = 0
+        browsingId = null
         resetPlayback()
     }
 

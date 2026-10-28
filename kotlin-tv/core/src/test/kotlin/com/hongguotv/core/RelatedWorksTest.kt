@@ -40,6 +40,22 @@ class RelatedWorksTest {
         assertFalse(rows[0].upcoming)
         assertEquals("第3季", rows[1].season)
         assertTrue(rows[1].upcoming)
+        val withCurrent = RelatedWorks.parse(data, "111", includeCurrent = true)
+        assertEquals(listOf("111", "222", "333"), withCurrent.map { it.series.id })
+    }
+
+    @Test
+    fun preservesEveryReturnedWorkBeyondThirtyInSourceOrder() {
+        val items=org.json.JSONArray()
+        repeat(45) { index -> items.put(JSONObject().put("series_id","${index+1000}")
+            .put("title","作品${index+1}").put("content_type",1004).put("episode_cnt",10)
+            .put("season_index",index+1)) }
+        val data=JSONObject().put("code",0).put("data",org.json.JSONArray().put(
+            JSONObject().put("show_type",547).put("video_data",items)))
+        val rows=RelatedWorks.parse(data.toString(),"999")
+        assertEquals(45,rows.size)
+        assertEquals("第1季",rows.first().season)
+        assertEquals("第45季",rows.last().season)
     }
 
     @Test
@@ -60,6 +76,8 @@ class RelatedWorksTest {
         assertEquals(2, calls)
         repository.related("111")
         assertEquals(2, calls)
+        assertEquals(listOf("111", "222", "333"), repository.related("111", includeCurrent = true).map { it.series.id })
+        assertEquals(2, calls) // 原列表与含当前季的列表共享同一次缓存。
         repository.related("111", force = true)
         assertEquals(3, calls)
     }

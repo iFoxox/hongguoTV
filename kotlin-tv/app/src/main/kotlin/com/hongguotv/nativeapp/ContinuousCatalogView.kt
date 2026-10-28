@@ -100,6 +100,8 @@ internal class ContinuousCatalogView(
                 val item = entries[position]
                 return bind(item, convertView).apply {
                     (this as? CatalogPosterCard)?.fitHeight(itemHeightLimit)
+                    if (TvStyle.touch && this is ViewGroup)
+                        foreground = TvStyle.pressHighlight(context)
                     tag = item.id
                     isFocusable = false
                     isClickable = false
@@ -242,7 +244,9 @@ internal class ContinuousCatalogView(
                 entries.isEmpty() && !available -> "暂无结果，可切换分类或搜索词"
                 busy -> "已加载 ${entries.size} 部 · 正在加载…"
                 failed -> "加载失败$failureReason，已保留列表 · 按「重试加载」重试"
-                available -> "已加载 ${entries.size} 部 · 向下浏览继续加载"
+                available ->
+                    "已加载 ${entries.size} 部 · " +
+                        TvStyle.hint("向下浏览继续加载", "滑动到底部自动加载")
                 else -> "共 ${entries.size} 部 · 已加载完毕"
             }
         next.text =
@@ -270,12 +274,8 @@ internal class ContinuousCatalogView(
         restorePosition = null
         onBrowsePosition?.invoke(0)
         grid.setSelection(if (entries.isEmpty()) AdapterView.INVALID_POSITION else 0)
-        post {
-            if (!closed && entries.isNotEmpty()) {
-                grid.setSelection(0)
-                grid.smoothScrollToPositionFromTop(0, 0, 0)
-            }
-        }
+        // 直接定位：恢复位置不需要平滑滚动，滚动动画在无刷新时钟的环境里还会一直排队。
+        grid.setSelectionFromTop(0, 0)
     }
 
     fun show(items: List<Series>, hasMore: Boolean, position: Position? = null) {
@@ -292,8 +292,7 @@ internal class ContinuousCatalogView(
         entries.getOrNull(index)?.let(selected)
         post {
             if (closed) return@post
-            if (position != null && index > 0)
-                grid.smoothScrollToPositionFromTop(index, position.top, 0)
+            if (position != null && index > 0) grid.setSelectionFromTop(index, position.top)
             restorePosition = null
         }
     }
@@ -418,7 +417,8 @@ internal class CatalogPosterCard(context: Context) : LinearLayout(context) {
             (4 * density).toInt(),
             (9 * density).toInt(),
         )
-        val width = (resources.displayMetrics.widthPixels * .9f - 14 * density * 5) / 6
+        // 以最窄布局（手机 3 列）估算海报上限高度；实际高度由 fitHeight 按可用高度收敛。
+        val width = (resources.displayMetrics.widthPixels * .95f - 14 * density * 2) / 3
         preferredHeight = (width / TvStyle.POSTER_ASPECT).toInt()
         poster.addView(image, FrameLayout.LayoutParams(-1, -1))
         poster.addView(

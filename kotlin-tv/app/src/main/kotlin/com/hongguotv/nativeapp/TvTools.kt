@@ -38,7 +38,7 @@ class TvTools(private val activity: Activity) {
         TextView(activity).apply {
             text = value
             textSize = size
-            setTextColor(Color.WHITE)
+            setTextColor(TvStyle.text)
             setPadding(dp(8), dp(4), dp(8), dp(4))
         }
 
@@ -79,7 +79,7 @@ class TvTools(private val activity: Activity) {
 
     fun info(title: String, message: String, anchor: View?) =
         open(
-            AlertDialog.Builder(activity)
+            AppDialogs.builder(activity)
                 .setTitle(title)
                 .setMessage(message)
                 .setPositiveButton("知道了", null)
@@ -89,7 +89,7 @@ class TvTools(private val activity: Activity) {
 
     fun confirm(title: String, message: String, anchor: View?, action: () -> Unit) {
         val next =
-            AlertDialog.Builder(activity)
+            AppDialogs.builder(activity)
                 .setTitle(title)
                 .setMessage(message)
                 .setNegativeButton("取消", null)
@@ -109,14 +109,14 @@ class TvTools(private val activity: Activity) {
         onExtra: () -> Unit = {},
     ) {
         val builder =
-            AlertDialog.Builder(activity)
+            AppDialogs.builder(activity)
                 .setTitle(title)
                 .setItems(labels.toTypedArray()) { _, index -> onChoice(index) }
                 .setNegativeButton("取消", null)
         if (extra != null) builder.setNeutralButton(extra) { _, _ -> onExtra() }
         val next = builder.create()
         open(next, anchor)
-        if (compact)
+        if (compact && !TvStyle.touch)
             next.window?.setLayout(
                 minOf(dp(620), (activity.resources.displayMetrics.widthPixels * .78f).toInt()),
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -131,6 +131,22 @@ class TvTools(private val activity: Activity) {
         anchor: View?,
         onChoice: (Int) -> Unit,
     ) {
+        if (TvStyle.touch) {
+            val options=MobileChoices(activity,columns=2)
+            val scroll=ScrollView(activity).apply { addView(options) }
+            lateinit var popup: AlertDialog
+            labels.forEachIndexed { index,label ->
+                options.addView(mobileButton(activity,label,color=if(index==selected) SurfaceStyle.accentText else TvStyle.text) {
+                    popup.dismiss()
+                    onChoice(index)
+                })
+            }
+            popup=AppDialogs.builder(activity).setTitle(title).setView(scroll)
+                .setNegativeButton("返回",null).create()
+            open(popup,anchor)
+            popup.window?.setLayout((activity.resources.displayMetrics.widthPixels*.94f).toInt(),-2)
+            return
+        }
         val content = column()
         val scroll = android.widget.ScrollView(activity)
         val list = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
@@ -156,13 +172,8 @@ class TvTools(private val activity: Activity) {
                         contentDescription = value
                         fun paint(focused: Boolean) {
                             setTextColor(if (index == selected) TvStyle.accent else TvStyle.text)
-                            background =
-                                TvStyle.shape(
-                                    activity,
-                                    if (index == selected) TvStyle.raised else TvStyle.surface,
-                                    if (focused) TvStyle.accent
-                                    else android.graphics.Color.TRANSPARENT,
-                                )
+                            isSelected = index == selected
+                            background = TvStyle.card(activity,focused)
                         }
                         paint(false)
                         setOnFocusChangeListener { _, focused -> paint(focused) }
@@ -173,14 +184,14 @@ class TvTools(private val activity: Activity) {
                     }
                 row.addView(
                     choice,
-                    LinearLayout.LayoutParams(0, dp(46), 1f).apply {
+                    LinearLayout.LayoutParams(0, dp(TvStyle.controlSize(46)), 1f).apply {
                         setMargins(dp(4), dp(4), dp(4), dp(4))
                     },
                 )
                 choices += choice
             }
             repeat(4 - values.size) {
-                row.addView(View(activity), LinearLayout.LayoutParams(0, dp(46), 1f))
+                row.addView(View(activity), LinearLayout.LayoutParams(0, dp(TvStyle.controlSize(46)), 1f))
             }
             list.addView(row)
         }
@@ -194,7 +205,7 @@ class TvTools(private val activity: Activity) {
                     ?: if (i / 4 < choices.lastIndex / 4) choices.last().id else v.id
         }
         next =
-            AlertDialog.Builder(activity)
+            AppDialogs.builder(activity)
                 .setTitle(title)
                 .setView(content)
                 .setNegativeButton("返回", null)
@@ -240,7 +251,7 @@ class TvTools(private val activity: Activity) {
                         Button(activity).apply {
                             id = View.generateViewId()
                             text = key
-                            minHeight = dp(42)
+                            minHeight = dp(TvStyle.controlSize(42))
                             backgroundTintList =
                                 android.content.res.ColorStateList(
                                     arrayOf(intArrayOf(android.R.attr.state_focused), intArrayOf()),
@@ -270,7 +281,7 @@ class TvTools(private val activity: Activity) {
                 content.addView(row)
             }
         val next =
-            AlertDialog.Builder(activity)
+            AppDialogs.builder(activity)
                 .setTitle("跳转集数 · 1—$count")
                 .setView(ScrollView(activity).apply { addView(content) })
                 .setNegativeButton("取消", null)
@@ -349,7 +360,7 @@ class TvTools(private val activity: Activity) {
         val status = label("正在开启手机输入…")
         content.addView(status)
         val builder =
-            AlertDialog.Builder(activity)
+            AppDialogs.builder(activity)
                 .setTitle("手机输入剧名")
                 .setView(content)
                 .setNegativeButton("关闭", null)
@@ -361,7 +372,7 @@ class TvTools(private val activity: Activity) {
             val message =
                 "请依次检查：\n1. 用手机浏览器打开二维码地址；扫码软件内打不开时，选择在浏览器打开。\n2. 手机不要只用移动数据；手机和电视需处于可互通的局域网。\n3. 访客 Wi-Fi、路由器设备隔离、VPN 可能阻断连接。\n4. 多个网络可尝试切换地址；电脑模拟器的内部地址通常无法被手机访问。\n\n返回时会重新生成二维码，旧地址随窗口关闭失效。"
             val help =
-                AlertDialog.Builder(activity)
+                AppDialogs.builder(activity)
                     .setTitle("手机连接不上")
                     .setMessage(message)
                     .setPositiveButton("重新生成二维码") { _, _ ->
@@ -450,7 +461,7 @@ class TvTools(private val activity: Activity) {
         val status = label("正在生成二维码…")
         content.addView(status)
         val next =
-            AlertDialog.Builder(activity)
+            AppDialogs.builder(activity)
                 .setTitle("手机备份与恢复")
                 .setView(ScrollView(activity).apply { addView(content) })
                 .setNegativeButton("关闭", null)
@@ -480,7 +491,7 @@ class TvTools(private val activity: Activity) {
                                     }
                                 preview.addView(settings)
                                 val confirm =
-                                    AlertDialog.Builder(activity)
+                                    AppDialogs.builder(activity)
                                         .setTitle("确认恢复本机记录")
                                         .setView(ScrollView(activity).apply { addView(preview) })
                                         .setNegativeButton("取消", null)

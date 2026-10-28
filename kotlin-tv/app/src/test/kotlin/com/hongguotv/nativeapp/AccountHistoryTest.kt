@@ -66,7 +66,7 @@ class AccountHistoryTest {
             (get("librarySources") as LibrarySources).accountHistory = true
             switch.invoke(activity, 4)
             val root = activity.findViewById<android.view.View>(android.R.id.content)
-            assertTrue(texts(root).any { it.contains("登录红果后") })
+            assertTrue(texts(root).any { it.contains("登录红果后") || it == "登录后查看账户历史" })
             field(account, "credentials", AccountCredentials("test-only"))
             field(account, "profile", CloudProfile("a", "账号 A"))
             field(

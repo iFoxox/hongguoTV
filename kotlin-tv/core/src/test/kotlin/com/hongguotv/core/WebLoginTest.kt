@@ -112,4 +112,33 @@ class WebLoginTest {
         login.qr()
         assertThrows(java.io.IOException::class.java) { login.poll() }
     }
+    @Test fun browserSessionIsVerifiedAndRefreshedBeforeReturningCredentials() {
+        var requests = 0
+        val login = WebLogin(http { request, response ->
+            requests++
+            assertEquals("hongguoduanju.com", request.url.host)
+            assertEquals("/passport/account/info/v2/", request.url.encodedPath)
+            assertEquals("sessionid=browser-test; passport_csrf_token=csrf-test", request.header("Cookie"))
+            assertEquals("csrf-test", request.header("x-tt-passport-csrf-token"))
+            response.addHeader("Set-Cookie", "sessionid=refreshed-test; Path=/; Secure; HttpOnly")
+            """{"message":"success","data":{"user_id":"test-only"}}"""
+        })
+        assertTrue(login.browserCredentials("sessionid=browser-test; passport_csrf_token=csrf-test").cookie.contains("sessionid=refreshed-test"))
+        assertEquals(1, requests)
+    }
+
+    @Test fun browserMissingMalformedAndRejectedSessionsNeverBecomeCredentials() {
+        var requests = 0
+        val login = WebLogin(http { _, _ ->
+            requests++
+            """{"message":"error","data":{"error_code":1001,"description":"会话无效"}}"""
+        })
+        assertThrows(IllegalStateException::class.java) { login.browserCredentials("passport_csrf_token=test") }
+        assertThrows(IllegalArgumentException::class.java) { login.browserCredentials("sessionid=test\r\nInjected=test") }
+        assertThrows(IllegalArgumentException::class.java) { login.browserCredentials("sessionid=" + "x".repeat(32769)) }
+        assertEquals(0, requests)
+        assertThrows(PhoneLogin.Failure::class.java) { login.browserCredentials("sessionid=test-invalid") }
+        assertEquals(1, requests)
+    }
+
 }
