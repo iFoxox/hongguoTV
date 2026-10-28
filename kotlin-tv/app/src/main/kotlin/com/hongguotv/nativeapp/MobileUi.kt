@@ -138,36 +138,64 @@ internal fun mobileButton(context: Context, title: String, icon: String? = null,
         setOnClickListener(action)
     }
 
+/** 固定顶栏里的等宽文字按钮；大字号在格内换行，保留完整标签和点击范围。 */
+internal fun mobileHeaderTab(view: TextView) {
+    fun dp(n: Int) = (n * view.resources.displayMetrics.density).toInt()
+    view.textSize = 13f
+    view.gravity = Gravity.CENTER
+    view.minWidth = dp(48)
+    view.minHeight = dp(48)
+    view.maxLines = 2
+    view.ellipsize = null
+    view.setPadding(dp(4), dp(6), dp(4), dp(6))
+    SurfaceStyle.headerTab(view)
+}
+
 /** 保留七个业务索引；历史是底部一级入口，搜索与分类通过顶栏和“我的”进入。 */
 internal class MobileCatalogShell(context: Context, tab: Int, open: (Int) -> Unit, search: () -> Unit) : LinearLayout(context) {
     val content = LinearLayout(context).apply { orientation=VERTICAL }
+    val headerContent = FrameLayout(context)
     val navigation: List<View>
     private fun dp(n:Int)=(n*resources.displayMetrics.density).toInt()
+
+    fun setHeaderContent(view: View) {
+        (view.parent as? android.view.ViewGroup)?.removeView(view)
+        headerContent.removeAllViews()
+        headerContent.addView(view, FrameLayout.LayoutParams(-1,-2,Gravity.CENTER_VERTICAL))
+    }
+
     init {
         orientation=VERTICAL
         content.setPadding(dp(12),dp(4),dp(12),0)
         setBackgroundColor(SurfaceStyle.background)
-        val header=FrameLayout(context).apply { background=SurfaceStyle.chrome() }
+        val header=LinearLayout(context).apply {
+            gravity=Gravity.CENTER_VERTICAL
+            background=SurfaceStyle.chrome()
+            minimumHeight=dp(52)
+            setPadding(dp(8),dp(2),dp(8),dp(2))
+        }
         val heading=TextView(context).apply {
             text=listOf("果映 TV","找剧","排行榜","收藏","观看历史","账户预约","我的")[tab]
             textSize=18f; gravity=Gravity.CENTER; setTextColor(TvStyle.text); setTypeface(null,Typeface.BOLD)
             maxLines=1; ellipsize=android.text.TextUtils.TruncateAt.END
         }
-        header.addView(heading,FrameLayout.LayoutParams(-1,-1).apply { leftMargin=dp(56); rightMargin=dp(56) })
         if(tab in listOf(1,3,5))
             header.addView(mobileButton(context,"","back") { open(if(tab==1) 0 else 6) }.apply { contentDescription="返回" },
-                FrameLayout.LayoutParams(dp(48),dp(48),Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin=dp(4) })
+                LayoutParams(dp(48),dp(48)))
+        else if(tab == 6) header.addView(Space(context),LayoutParams(dp(48),dp(48)))
+        header.addView(headerContent,LayoutParams(0,-2,1f))
+        if(tab !in listOf(0,2,4)) setHeaderContent(heading)
         header.addView(ImageButton(context).apply {
             contentDescription="找剧：关键词与分类筛选"
             setImageDrawable(MobileIcon("search",TvStyle.text))
             scaleType=ImageView.ScaleType.CENTER_INSIDE
             isFocusable=true; isFocusableInTouchMode=false
-            SurfaceStyle.button(this)
-            // 40dp 的视觉按钮保留 48dp 点击范围，图标 18dp 居中。
+            SurfaceStyle.headerTab(this)
+            // 与分类共用扁平背景和按下反馈，48dp 点击范围内将 18dp 图标居中。
             setPadding(dp(15),dp(15),dp(15),dp(15))
             setOnClickListener { search() }
-        }, FrameLayout.LayoutParams(dp(48),dp(48),Gravity.END or Gravity.CENTER_VERTICAL).apply { rightMargin=dp(8) })
-        addView(header,LayoutParams(-1,dp(52)))
+        }, LayoutParams(dp(48),dp(48)))
+        addView(header,LayoutParams(-1,-2))
         addView(View(context).apply { setBackgroundColor(SurfaceStyle.divider) },LayoutParams(-1,dp(1)))
         addView(content,LayoutParams(-1,0,1f))
         addView(View(context).apply { setBackgroundColor(SurfaceStyle.divider) },LayoutParams(-1,dp(1)))

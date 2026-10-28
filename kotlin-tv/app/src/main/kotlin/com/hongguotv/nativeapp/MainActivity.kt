@@ -134,6 +134,7 @@ class MainActivity : Activity() {
     private var prefetchAttempts = 0
     private val homeFeedState = DramaFeedState()
     private var homeFeed: HomeFeedScreen? = null
+    private var mobileCatalogShell: MobileCatalogShell? = null
     private var homeFeedIdentity = ""
     private var homeScreen: HomeScreen? = null
     private var selectionPreview: SeriesPreview? = null
@@ -698,6 +699,7 @@ class MainActivity : Activity() {
             showSystemBars(true)
             root.setBackgroundColor(bg)
             val shell = MobileCatalogShell(this, tab, ::switchTab, ::openFinder)
+            mobileCatalogShell = shell
             trackPageInset(shell, 0, 0, 0, 0)
             root.addView(shell, FrameLayout.LayoutParams(-1,-1))
             nav.addAll(shell.navigation)
@@ -917,6 +919,7 @@ class MainActivity : Activity() {
         )
         homeFeed?.close()
         homeFeed = null
+        mobileCatalogShell = null
         relatedSection = null
         accountFavoriteButton = null
         homeScreen?.let { homePosition = it.capturePosition() }
@@ -1214,6 +1217,7 @@ class MainActivity : Activity() {
                     },
                     openResume = { series -> openDetail(series, true) },
                     cover = ::loadCover,
+                    mobileHeader = mobileCatalogShell?.let { it::setHeaderContent },
                 )
             homeFeed = feed
             container.addView(feed, lp(-1, 0).apply { weight = 1f })
@@ -1246,6 +1250,7 @@ class MainActivity : Activity() {
                     },
                 )
             container.addView(ranks, lp(-1, 0).apply { weight = 1f })
+            ranks.mobileHeader?.let { mobileCatalogShell?.setHeaderContent(it) }
             ranks.start(load, focusNav)
             return
         }
@@ -1471,7 +1476,7 @@ class MainActivity : Activity() {
                 if (TvStyle.touch && tab == 4) {
                     val tabs = MobileHistoryTabs(this,account,::switchLibrarySource)
                     sourceButtons.addAll(tabs.tabs)
-                    sources.addView(tabs,lp(-1,-2))
+                    mobileCatalogShell?.setHeaderContent(tabs)
                 } else {
                     listOf(false, true).forEach { remote ->
                         sourceButtons +=
@@ -1494,7 +1499,7 @@ class MainActivity : Activity() {
                 sourceButtons[0].nextFocusRightId = sourceButtons[1].id
                 sourceButtons[1].nextFocusLeftId = sourceButtons[0].id
                 sourceButtons[1].nextFocusRightId = sourceButtons[1].id
-                container.addView(sources)
+                if (!(TvStyle.touch && tab == 4)) container.addView(sources)
                 if (TvStyle.touch && tab == 4 && heading.childCount > 0) container.addView(heading)
                 TvStyle.navInto(nav, sourceButtons[if (account) 1 else 0])
                 favoriteCheck?.nextFocusDownId = sourceButtons[if (account) 1 else 0].id

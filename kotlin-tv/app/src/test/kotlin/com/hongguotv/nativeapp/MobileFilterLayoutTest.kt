@@ -29,15 +29,17 @@ class MobileFilterLayoutTest {
         val tools=TvTools(c.get())
         val state=RankBrowserState()
         RankBoard.entries.forEach { board -> state.endRefresh(board,RankSnapshot(board,listOf(Series("1","作品")),ComicRanking(emptyMap(),1,""))) }
-        val nav=(0..6).map { View(c.get()).apply { id=View.generateViewId() } }
-        val screen=RankingScreen(c.get(),state,nav,tools,{ _,_ -> },{}, { _,_ -> },{ _,_ -> fail("fresh cache fetched") })
+        val shell=MobileCatalogShell(c.get(),2,{}, {})
+        val screen=RankingScreen(c.get(),state,shell.navigation,tools,{ _,_ -> },{}, { _,_ -> },{ _,_ -> fail("fresh cache fetched") })
         try {
-            c.get().setContentView(screen); screen.start(false,false); layout(screen)
-            val boards=RankBoard.entries.map { board -> views(screen).filterIsInstance<TextView>().single { it.text==board.label } }
+            shell.setHeaderContent(screen.mobileHeader!!)
+            shell.content.addView(screen,LinearLayout.LayoutParams(-1,-1))
+            c.get().setContentView(shell); screen.start(false,false); layout(shell)
+            val boards=RankBoard.entries.map { board -> views(shell.headerContent).filterIsInstance<TextView>().single { it.text==board.label } }
             assertEquals(4,boards.size)
             assertSame(boards[0].parent,boards[3].parent)
-            assertTrue(boards[0].parent is MobileChoices)
-            assertTrue(boards[2].top > boards[0].top)
+            assertEquals(boards[0].top,boards[2].top)
+            assertFalse(views(screen).filterIsInstance<TextView>().any { it.text.toString().endsWith("热播榜") })
             boards.forEach { chip ->
                 assertTrue(chip.left>=0 && chip.right<=(chip.parent as View).width)
                 assertEquals(Gravity.CENTER,chip.gravity)
@@ -45,7 +47,7 @@ class MobileFilterLayoutTest {
             }
             boards[3].performClick()
             assertEquals(RankBoard.entries[3],state.board)
-            assertFalse(views(screen).filterIsInstance<HorizontalScrollView>().any { it.getChildAt(0)===boards[0].parent })
+            assertFalse(views(shell).filterIsInstance<HorizontalScrollView>().any { it.getChildAt(0)===boards[0].parent })
         } finally { tools.destroy(); c.pause().stop().destroy() }
     }
     @Test fun topicDialogShowsLongLabelsAndReturnsTheCorrectChoice() {
