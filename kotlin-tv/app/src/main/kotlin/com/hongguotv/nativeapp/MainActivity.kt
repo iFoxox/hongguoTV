@@ -4434,6 +4434,10 @@ class MainActivity : Activity() {
         addPlaybackRow(options)
         lateinit var episodes: TextView
         episodes = addButton(options, "选集") { showEpisodePanel(episodes) }
+        val related = if (!TvStyle.touch) addButton(options, "相关作品") {
+            returnToDetail(forceDetail = true)
+            relatedSection?.focusEntry()
+        } else null
         lateinit var commentsButton: TextView
         commentsButton = addButton(options, "评论") { social.showComments(commentsButton) }
         lateinit var danmakuButton: TextView
@@ -4482,11 +4486,22 @@ class MainActivity : Activity() {
                 }
                 .apply { tag = "playback-settings" }
         if (compact)
-            listOf(episodes, commentsButton, danmakuButton, more).forEach {
+            listOfNotNull(episodes, related, commentsButton, danmakuButton, more).forEach {
                 it.textSize = 12f
                 it.setPadding(dp(8), dp(10), dp(8), dp(10))
             }
-        if (!TvStyle.touch) play.requestFocus()
+        if (!TvStyle.touch) {
+            val actions = listOfNotNull(episodes, related, commentsButton, danmakuButton, more)
+            val transportActions = (0 until transport.childCount).map { transport.getChildAt(it) }.filter { it.isFocusable }
+            actions.forEachIndexed { index, view ->
+                view.nextFocusLeftId = actions.getOrNull(index - 1)?.id ?: view.id
+                view.nextFocusRightId = actions.getOrNull(index + 1)?.id ?: view.id
+                view.nextFocusUpId = transportActions[minOf(index, transportActions.lastIndex)].id
+                view.nextFocusDownId = view.id
+            }
+            transportActions.forEachIndexed { index, view -> view.nextFocusDownId = actions[minOf(index, actions.lastIndex)].id }
+            play.requestFocus()
+        }
     }
 
     private fun showSpeedPicker(anchor: TextView, inPlayer: Boolean = true) {

@@ -32,6 +32,55 @@ class TvUsabilityTest {
         if (view is ViewGroup) (0 until view.childCount).flatMap { texts(view.getChildAt(it)) }
         else if (view is TextView) listOf(view) else emptyList()
 
+    @Test fun playbackRelatedEntryOpensDetailAtPreviousSeasonEvenFromDirectPlayback() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        val priorTouch = TvStyle.touch
+        try {
+            TvStyle.touch = false
+            val library = get(activity, "library") as Library
+            (get(library, "loader") as ExecutorService).submit {}.get(5, TimeUnit.SECONDS)
+            (get(get(activity, "cloudAccount")!!, "worker") as ExecutorService).submit {}.get(5, TimeUnit.SECONDS)
+            ShadowLooper.idleMainLooper()
+            val rows = (1..12).joinToString(",") { n ->
+                """{"series_id":"$n","title":"作品第${n}季","content_type":1004,"episode_cnt":40,"season_index":$n}"""
+            }
+            set(activity, "repository", ContentRepository(OkHttpClient.Builder().addInterceptor { chain ->
+                Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("fixture")
+                    .body("""{"code":0,"data":[{"show_type":547,"video_data":[$rows]}]}""".toResponseBody()).build()
+            }.build()))
+            val current = Series("9", "作品第九季")
+            val data = Detail(current, (1..40).map { "e$it" })
+            library.save(WatchProgress(current, "e25", 24, 12000, 90000, false, 1000))
+            set(activity, "detail", data); set(activity, "episodeIndex", 24); set(activity, "group", 1)
+            set(activity, "directPlayback", true)
+            val controls = android.widget.LinearLayout(activity)
+            set(activity, "controls", controls)
+            MainActivity::class.java.getDeclaredMethod("showPanel").apply { isAccessible = true }.invoke(activity)
+            val actions = texts(controls)
+            val entry = actions.single { it.text == "相关作品" }
+            val episodes = actions.single { it.text == "选集" }
+            assertEquals(entry.id, episodes.nextFocusRightId)
+            assertEquals(episodes.id, entry.nextFocusLeftId)
+            set(activity, "foreground", true)
+            entry.performClick()
+            assertEquals("detail", get(activity, "screen"))
+            assertEquals(false, get(activity, "directPlayback"))
+            assertEquals(24, get(activity, "episodeIndex"))
+            assertEquals(12000L, library.progress("9")!!.position)
+            val section = get(activity, "relatedSection") as RelatedWorksView
+            assertNotNull(section.findFocus())
+            (get(activity, "workJob") as java.util.concurrent.Future<*>).get(5, TimeUnit.SECONDS)
+            ShadowLooper.idleMainLooper()
+            val root = activity.findViewById<View>(android.R.id.content)
+            root.measure(View.MeasureSpec.makeMeasureSpec(960,View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(540,View.MeasureSpec.EXACTLY))
+            root.layout(0,0,960,540); ShadowLooper.idleMainLooper()
+            assertEquals(texts(section).joinToString { it.text }, "8", section.findFocus()!!.tag)
+            assertTrue(texts(root).any { it.text == "当前作品" })
+            assertTrue(texts(root).any { it.text == "继续第 25 集" })
+        } finally { TvStyle.touch = priorTouch; controller.destroy() }
+    }
+
     @Test
     fun detailKeepsPlaybackCommentsAndSeparateSecondaryActions() {
         val controller = Robolectric.buildActivity(MainActivity::class.java).create()

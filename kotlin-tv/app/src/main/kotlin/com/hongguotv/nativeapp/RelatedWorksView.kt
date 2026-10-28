@@ -83,6 +83,12 @@ internal class RelatedWorksView(
         reset("相关作品暂时无法加载，可按刷新重试；当前剧集仍可正常观看。")
     }
 
+    /** 从播放控制区直达；加载中先聚焦刷新，成功后由 show 恢复到上一季。 */
+    fun focusEntry() {
+        val refresh = refreshButton ?: return
+        (findViewById<View>(refresh.nextFocusDownId) ?: refresh).requestFocus()
+    }
+
     fun show(rows: List<RelatedWork>, current: Series? = null) {
         reset(if (rows.isEmpty()) "暂无相关剧集" else "左右浏览其他季及同 IP 作品 · 上键刷新 · 待上线作品可预约")
         if (rows.isEmpty()) return
