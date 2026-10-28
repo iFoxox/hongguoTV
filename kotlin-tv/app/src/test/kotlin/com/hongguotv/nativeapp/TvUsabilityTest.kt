@@ -50,9 +50,9 @@ class TvUsabilityTest {
                     .body("""{"code":0,"data":[{"show_type":547,"video_data":[$rows]}]}""".toResponseBody()).build()
             }.build()))
             val current = Series("9", "作品第九季")
-            val data = Detail(current, (1..40).map { "e$it" })
+            val data = Detail(current, (1..107).map { "e$it" })
             library.save(WatchProgress(current, "e25", 24, 12000, 90000, false, 1000))
-            set(activity, "detail", data); set(activity, "episodeIndex", 24); set(activity, "group", 1)
+            set(activity, "detail", data); set(activity, "episodeIndex", 24); set(activity, "group", 0)
             set(activity, "directPlayback", true)
             val controls = android.widget.LinearLayout(activity)
             set(activity, "controls", controls)
@@ -78,6 +78,15 @@ class TvUsabilityTest {
             assertEquals(texts(section).joinToString { it.text }, "8", section.findFocus()!!.tag)
             assertTrue(texts(root).any { it.text == "当前作品" })
             assertTrue(texts(root).any { it.text == "继续第 25 集" })
+            fun episodeCells() = texts(root).filter { it.text.matches(Regex("[0-9]+(?:\n.*)?")) }
+            assertEquals(50,episodeCells().size)
+            texts(root).single { it.text=="下一组 ›" }.performClick()
+            assertEquals(50,episodeCells().size)
+            assertTrue(texts(root).any { it.text.contains("51—100") })
+            texts(root).single { it.text=="下一组 ›" }.performClick()
+            assertEquals(7,episodeCells().size)
+            assertTrue(texts(root).any { it.text.contains("101—107") })
+            assertEquals(24,get(activity,"episodeIndex"))
         } finally { TvStyle.touch = priorTouch; controller.destroy() }
     }
 
@@ -85,6 +94,8 @@ class TvUsabilityTest {
     fun detailKeepsPlaybackCommentsAndSeparateSecondaryActions() {
         val controller = Robolectric.buildActivity(MainActivity::class.java).create()
         val activity = controller.get()
+        val priorTouch = TvStyle.touch
+        TvStyle.touch = false
         try {
             val library = get(activity, "library") as Library
             (get(library, "loader") as ExecutorService).submit {}.get(5, TimeUnit.SECONDS)
@@ -113,7 +124,7 @@ class TvUsabilityTest {
             library.save(WatchProgress(series, "25", 24, 12000, 90000, false, 1000))
             set(activity, "detail", data)
             set(activity, "episodeIndex", 24)
-            set(activity, "group", 1)
+            set(activity, "group", 0)
             MainActivity::class
                 .java
                 .getDeclaredMethod("showDetail", Boolean::class.javaPrimitiveType)
@@ -129,12 +140,13 @@ class TvUsabilityTest {
             assertEquals(play.id, comments.nextFocusLeftId)
             assertNotSame(play.parent, rows.first { it.text == "加入本机收藏" }.parent)
             assertEquals(2, rows.first { it.text.toString().startsWith("很长的简介") }.maxLines)
-            assertEquals(1, get(activity, "group"))
+            assertEquals(0, get(activity, "group"))
             val selected = texts(root).first { it.text == "25\n当前" }
             assertTrue(selected.isSelected)
             assertTrue(rows.any { it.text == "跳转集数" })
             assertEquals("detail", get(activity, "screen"))
         } finally {
+            TvStyle.touch = priorTouch
             controller.destroy()
         }
     }

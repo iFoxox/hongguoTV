@@ -2821,7 +2821,7 @@ class MainActivity : Activity() {
                         progress?.completed == true,
                     )
                 episodeIndex = target.index
-                group = episodeIndex / 20
+                group = episodeIndex / EpisodeGrouping.size
                 if (resume) playEpisode(target.index, target.position, autoplay = detailAutoplay)
                 else showDetail(false)
             },
@@ -2990,7 +2990,7 @@ class MainActivity : Activity() {
         val perRow = if (narrowDetail) 5 else 10
         val groupRow = row()
         groupRow.setPadding(0, dp(3), 0, dp(5))
-        val maxGroup = data.episodes.lastIndex / 20
+        val maxGroup = data.episodes.lastIndex / EpisodeGrouping.size
         group = group.coerceIn(0, maxGroup)
         val previous =
             addButton(groupRow, if (narrowDetail) "上一组" else "‹ 上一组") {
@@ -3006,8 +3006,8 @@ class MainActivity : Activity() {
                 }
         groupRow.addView(
             text(
-                    if (narrowDetail) "${group*20+1}—${minOf((group+1)*20,data.episodes.size)}"
-                    else "第 ${group*20+1}—${minOf((group+1)*20,data.episodes.size)} 集",
+                    if (narrowDetail) "${group*EpisodeGrouping.size+1}—${minOf((group+1)*EpisodeGrouping.size,data.episodes.size)}"
+                    else "第 ${group*EpisodeGrouping.size+1}—${minOf((group+1)*EpisodeGrouping.size,data.episodes.size)} 集",
                     if (narrowDetail) 14f else 16f,
                 )
                 .apply { gravity = Gravity.CENTER },
@@ -3030,7 +3030,7 @@ class MainActivity : Activity() {
             addButton(groupRow, if (narrowDetail) "跳转" else "跳转集数") {
                 tvTools.episodePicker(data.episodes.size, episodeIndex, jump) { target ->
                     episodeIndex = target
-                    group = target / 20
+                    group = target / EpisodeGrouping.size
                     showDetail(true)
                 }
             }
@@ -3047,7 +3047,7 @@ class MainActivity : Activity() {
                 .apply { setPadding(0, 0, 0, dp(6)) }
         )
         val episodes = mutableListOf<View>()
-        (group * 20 until minOf((group + 1) * 20, data.episodes.size))
+        (group * EpisodeGrouping.size until minOf((group + 1) * EpisodeGrouping.size, data.episodes.size))
             .toList()
             .chunked(perRow)
             .forEach { numbers ->
@@ -3077,7 +3077,7 @@ class MainActivity : Activity() {
                     item.contentDescription = "第 ${index+1} 集"
                     line.addView(
                         item,
-                        lp(0, dp(TvStyle.controlSize(42))).apply {
+                        lp(0, dp(TvStyle.controlSize(36))).apply {
                             weight = 1f
                             rightMargin = dp(6)
                         },
@@ -3087,13 +3087,13 @@ class MainActivity : Activity() {
                 repeat(perRow - numbers.size) {
                     line.addView(
                         Space(this),
-                        lp(0, dp(TvStyle.controlSize(42))).apply {
+                        lp(0, dp(TvStyle.controlSize(36))).apply {
                             weight = 1f
                             rightMargin = dp(6)
                         },
                     )
                 }
-                content.addView(line, lp(-1, dp(if (TvStyle.touch) 56 else 49)))
+                content.addView(line, lp(-1, dp(if (TvStyle.touch) 56 else 42)))
             }
         episodes.forEachIndexed { i, v ->
             v.nextFocusLeftId = if (i % perRow == 0) v.id else episodes[i - 1].id
@@ -3102,7 +3102,8 @@ class MainActivity : Activity() {
                 else episodes[i + 1].id
             if (i >= perRow) v.nextFocusUpId = episodes[i - perRow].id
             v.nextFocusDownId =
-                if (i + perRow < episodes.size) episodes[i + perRow].id else v.id
+                if (i + perRow < episodes.size) episodes[i + perRow].id
+                else if (i / perRow < episodes.lastIndex / perRow) episodes.last().id else v.id
         }
         val primary = listOf(play, detailComments)
         play.setTextColor(accent)
@@ -3136,7 +3137,7 @@ class MainActivity : Activity() {
         section =
             RelatedWorksView(
                 this,
-                episodes,
+                episodes.takeLast((episodes.size - 1) % perRow + 1),
                 ::loadCover,
                 cloudAccount::reservationLabel,
                 { related, anchor ->
@@ -3188,7 +3189,7 @@ class MainActivity : Activity() {
             cloudAccount.refreshFavorites()
         if (focusEpisode)
             episodes
-                .getOrNull((episodeIndex - group * 20).coerceIn(0, episodes.lastIndex))
+                .getOrNull((episodeIndex - group * EpisodeGrouping.size).coerceIn(0, episodes.lastIndex))
                 ?.requestFocus()
         else play.requestFocus()
     }
@@ -3398,7 +3399,7 @@ class MainActivity : Activity() {
         if (autoplay) sleepStopped = false
         screen = "player"
         episodeIndex = selectedIndex
-        group = episodeIndex / 20
+        group = episodeIndex / EpisodeGrouping.size
         panel = false
         playError = false
         playbackReady = false
@@ -3986,7 +3987,7 @@ class MainActivity : Activity() {
         video = next
         playbackHttp = queuedHttp
         episodeIndex = queuedEpisode
-        group = episodeIndex / 20
+        group = episodeIndex / EpisodeGrouping.size
         queuedNext = null
         queuedHttp = null
         queuedEpisode = -1
