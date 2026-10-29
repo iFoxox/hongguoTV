@@ -398,6 +398,8 @@ class MainActivity : Activity() {
     /** 播放页隐藏系统栏以获得整屏画面；离开播放页时恢复浏览状态栏。 */
     private fun showSystemBars(visible: Boolean) {
         if (!TvStyle.touch) return
+        // 全屏切换不会必然触发新的 Insets，立即更新播放器及控制层的安全边距。
+        applyPageInsets()
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         updateSystemBarStyle()
         if (visible) controller.show(WindowInsetsCompat.Type.systemBars())
@@ -449,6 +451,13 @@ class MainActivity : Activity() {
     }
 
     private fun applyPageInset(view: View, base: IntArray) {
+        if (view === mobilePlayer && mobilePlayer?.fullscreen == true) {
+            // 视频铺满刘海区；控制层单独避开遮挡，浏览页仍使用原有安全边距。
+            view.setPadding(0, 0, 0, 0)
+            mobilePlayer?.setFullscreenInsets(insetLeft, insetTop, insetRight, insetBottom)
+            return
+        }
+        if (view === mobilePlayer) mobilePlayer?.setFullscreenInsets(0, 0, 0, 0)
         view.setPadding(
             base[0] + insetLeft,
             base[1] + insetTop,
