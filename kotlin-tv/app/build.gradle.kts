@@ -25,8 +25,8 @@ android {
         applicationId = "io.github.tsukiyo_zero.guoyingtv"
         minSdk = 23
         targetSdk = 36
-        versionCode = System.getenv("HONGGUOTV_VERSION_CODE")?.toInt() ?: 54
-        versionName = System.getenv("HONGGUOTV_VERSION_NAME") ?: "0.1.13"
+        versionCode = System.getenv("HONGGUOTV_VERSION_CODE")?.toInt() ?: 55
+        versionName = System.getenv("HONGGUOTV_VERSION_NAME") ?: "0.1.14"
         buildConfigField("String", "LOCAL_BUILD_LABEL", "\"$localBuildLabel\"")
     }
     buildFeatures { buildConfig = true }
