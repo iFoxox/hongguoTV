@@ -4323,22 +4323,20 @@ class MainActivity : Activity() {
     private fun showSleepPicker(anchor: TextView) {
         val labels =
             listOf("关闭定时停止", "15 分钟后", "30 分钟后", "60 分钟后", "90 分钟后", "本集播完", "再播完 3 集", "再播完 5 集")
-        tvTools.choose(
-            "定时停止 · ${sleepTimer.label()}",
-            labels,
-            anchor,
-            { choice ->
-                when (choice) {
-                    0 -> sleepTimer.cancel()
-                    in 1..4 -> sleepTimer.afterMinutes(listOf(15, 30, 60, 90)[choice - 1])
-                    else -> sleepTimer.afterEpisodes(listOf(1, 3, 5)[choice - 5])
-                }
-                if (sleepTimer.episodesLeft == 1) cancelPrefetch()
-                if (anchor.tag != "playback-settings") anchor.text = "定时 ${sleepTimer.label()}"
-                updatePlaybackText()
-                showHud()
-            },
-        )
+        val choose: (Int) -> Unit = { choice ->
+            when (choice) {
+                0 -> sleepTimer.cancel()
+                in 1..4 -> sleepTimer.afterMinutes(listOf(15, 30, 60, 90)[choice - 1])
+                else -> sleepTimer.afterEpisodes(listOf(1, 3, 5)[choice - 5])
+            }
+            if (sleepTimer.episodesLeft == 1) cancelPrefetch()
+            if (anchor.tag != "playback-settings") anchor.text = "定时 ${sleepTimer.label()}"
+            updatePlaybackText()
+            showHud()
+        }
+        val title = "定时停止 · ${sleepTimer.label()}"
+        if (TvStyle.touch) tvTools.choose(title, labels, anchor, choose)
+        else tvTools.chooseGrid(title, labels, -1, anchor, choose)
     }
 
     private fun frameResizeMode() =

@@ -41,6 +41,7 @@ internal object AppDialogs {
         }
         fun start() {
             decorate(popup)
+            fitOptions(popup)
             if (observer?.isAlive == true) return
             popup.window?.decorView?.viewTreeObserver?.let {
                 observer = it
@@ -58,14 +59,56 @@ internal object AppDialogs {
         }
         override fun onViewDetachedFromWindow(view: View) = stop()
         override fun onGlobalLayout() {
+            fitOptions(popup)
             // 列表回收及网络加载会在 onShow 之后创建新文字，不能只着色首次的视图树。
             chrome(popup)
             popup.window?.decorView?.let(::colors)
         }
         override fun onPreDraw(): Boolean {
             // 固件可能在布局后重设背景；绘制前再校正，避免显示黑底深字的一帧。
-            onGlobalLayout()
+            chrome(popup)
+            popup.window?.decorView?.let(::colors)
             return true
+        }
+    }
+
+    private fun fitOptions(popup: Dialog) {
+        if (TvStyle.touch || popup !is AlertDialog) return
+        val list = popup.listView ?: return
+        val adapter = list.adapter ?: return
+        if (adapter.count == 0) return
+        val window = popup.window ?: return
+        val decor = window.decorView
+        val metrics = popup.context.resources.displayMetrics
+        fun dp(n: Int) = (n * metrics.density).toInt()
+        val width = (list.width.takeIf { it > 0 }
+            ?: window.attributes.width.takeIf { it > 0 }
+            ?: (metrics.widthPixels * .88f).toInt()) - list.paddingLeft - list.paddingRight
+        val widthSpec = View.MeasureSpec.makeMeasureSpec(width.coerceAtLeast(1), View.MeasureSpec.EXACTLY)
+        // ListView 在高度未指定时可能只测量第一行；显式累计全部选项，避免大屏菜单藏项。
+        var height = list.paddingTop + list.paddingBottom
+        for (i in 0 until adapter.count) {
+            val row = adapter.getView(i, null, list)
+            row.measure(widthSpec, View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            height += row.measuredHeight
+            if (i > 0) height += list.dividerHeight
+        }
+        val chromeHeight = (decor.height - list.height).coerceAtLeast(dp(112))
+        val available = ((metrics.heightPixels * .94f).toInt() - chromeHeight).coerceAtLeast(dp(48))
+        val target = minOf(height, available)
+        list.isVerticalScrollBarEnabled = height > available
+        list.isScrollbarFadingEnabled = false
+        if (list.layoutParams.height != target) list.layoutParams = list.layoutParams.apply { this.height = target }
+        // 固件可能同时把列表外层设为一行高度或 0dp+weight，列表自己变高仍会被裁切。
+        var parent = list.parent as? ViewGroup
+        while (parent != null && parent !== decor && parent.id != android.R.id.content) {
+            val params = parent.layoutParams
+            if (params != null && params.height != ViewGroup.LayoutParams.WRAP_CONTENT) {
+                params.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                if (params is LinearLayout.LayoutParams) params.weight = 0f
+                parent.layoutParams = params
+            }
+            parent = parent.parent as? ViewGroup
         }
     }
 
@@ -146,6 +189,8 @@ internal object AppDialogs {
             chrome(popup)
             if (popup is AlertDialog) {
                 if(TvStyle.touch) window.setLayout(minOf(dp(560),(context.resources.displayMetrics.widthPixels*.92f).toInt()),-2)
+                else if (popup.listView != null) window.setLayout(
+                    minOf(dp(760),(context.resources.displayMetrics.widthPixels*.88f).toInt()),-2)
             }
             colors(window.decorView)
         }
