@@ -215,6 +215,9 @@ class TvTools(private val activity: Activity) {
             (activity.resources.displayMetrics.widthPixels * .85f).toInt(),
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
         )
+        val back = next.getButton(AlertDialog.BUTTON_NEGATIVE)
+        choices.filterIndexed { i, _ -> i / 4 == choices.lastIndex / 4 }.forEach { it.nextFocusDownId = back.id }
+        back.nextFocusUpId = choices.lastOrNull()?.id ?: back.id
         choices.getOrNull(selected.coerceAtLeast(0))?.requestFocus()
     }
 

@@ -2640,7 +2640,8 @@ class MainActivity : Activity() {
                 tvTools.info(
                     "关于果映 TV",
                     "hongguoTV · 非官方客户端\n作者：tsukiyo-zero\n版本：${BuildConfig.VERSION_NAME}\n" +
-                        (if (BuildConfig.DEBUG) "测试构建：${InteractionMode.TEST_BUILD}\n" else "") +
+                        (if (BuildConfig.LOCAL_BUILD_LABEL.isNotEmpty()) "构建标识：${BuildConfig.LOCAL_BUILD_LABEL}\n"
+                        else if (BuildConfig.DEBUG) "测试构建：${InteractionMode.TEST_BUILD}\n" else "") +
                         "界面模式：${InteractionMode.label(this)}\n项目：https://github.com/tsukiyo-zero/hongguoTV\n\n本应用与红果官方无隶属关系。",
                     about,
                 )
@@ -2821,7 +2822,7 @@ class MainActivity : Activity() {
                         progress?.completed == true,
                     )
                 episodeIndex = target.index
-                group = episodeIndex / 20
+                group = episodeIndex / EpisodeGrouping.size
                 if (resume) playEpisode(target.index, target.position, autoplay = detailAutoplay)
                 else showDetail(false)
             },
@@ -2990,7 +2991,7 @@ class MainActivity : Activity() {
         val perRow = if (narrowDetail) 5 else 10
         val groupRow = row()
         groupRow.setPadding(0, dp(3), 0, dp(5))
-        val maxGroup = data.episodes.lastIndex / 20
+        val maxGroup = data.episodes.lastIndex / EpisodeGrouping.size
         group = group.coerceIn(0, maxGroup)
         val previous =
             addButton(groupRow, if (narrowDetail) "上一组" else "‹ 上一组") {
@@ -3006,8 +3007,8 @@ class MainActivity : Activity() {
                 }
         groupRow.addView(
             text(
-                    if (narrowDetail) "${group*20+1}—${minOf((group+1)*20,data.episodes.size)}"
-                    else "第 ${group*20+1}—${minOf((group+1)*20,data.episodes.size)} 集",
+                    if (narrowDetail) "${group*EpisodeGrouping.size+1}—${minOf((group+1)*EpisodeGrouping.size,data.episodes.size)}"
+                    else "第 ${group*EpisodeGrouping.size+1}—${minOf((group+1)*EpisodeGrouping.size,data.episodes.size)} 集",
                     if (narrowDetail) 14f else 16f,
                 )
                 .apply { gravity = Gravity.CENTER },
@@ -3030,7 +3031,7 @@ class MainActivity : Activity() {
             addButton(groupRow, if (narrowDetail) "跳转" else "跳转集数") {
                 tvTools.episodePicker(data.episodes.size, episodeIndex, jump) { target ->
                     episodeIndex = target
-                    group = target / 20
+                    group = target / EpisodeGrouping.size
                     showDetail(true)
                 }
             }
@@ -3047,7 +3048,7 @@ class MainActivity : Activity() {
                 .apply { setPadding(0, 0, 0, dp(6)) }
         )
         val episodes = mutableListOf<View>()
-        (group * 20 until minOf((group + 1) * 20, data.episodes.size))
+        (group * EpisodeGrouping.size until minOf((group + 1) * EpisodeGrouping.size, data.episodes.size))
             .toList()
             .chunked(perRow)
             .forEach { numbers ->
@@ -3077,7 +3078,7 @@ class MainActivity : Activity() {
                     item.contentDescription = "第 ${index+1} 集"
                     line.addView(
                         item,
-                        lp(0, dp(TvStyle.controlSize(42))).apply {
+                        lp(0, dp(TvStyle.controlSize(36))).apply {
                             weight = 1f
                             rightMargin = dp(6)
                         },
@@ -3087,13 +3088,13 @@ class MainActivity : Activity() {
                 repeat(perRow - numbers.size) {
                     line.addView(
                         Space(this),
-                        lp(0, dp(TvStyle.controlSize(42))).apply {
+                        lp(0, dp(TvStyle.controlSize(36))).apply {
                             weight = 1f
                             rightMargin = dp(6)
                         },
                     )
                 }
-                content.addView(line, lp(-1, dp(if (TvStyle.touch) 56 else 49)))
+                content.addView(line, lp(-1, dp(if (TvStyle.touch) 56 else 42)))
             }
         episodes.forEachIndexed { i, v ->
             v.nextFocusLeftId = if (i % perRow == 0) v.id else episodes[i - 1].id
@@ -3102,7 +3103,8 @@ class MainActivity : Activity() {
                 else episodes[i + 1].id
             if (i >= perRow) v.nextFocusUpId = episodes[i - perRow].id
             v.nextFocusDownId =
-                if (i + perRow < episodes.size) episodes[i + perRow].id else v.id
+                if (i + perRow < episodes.size) episodes[i + perRow].id
+                else if (i / perRow < episodes.lastIndex / perRow) episodes.last().id else v.id
         }
         val primary = listOf(play, detailComments)
         play.setTextColor(accent)
@@ -3136,7 +3138,7 @@ class MainActivity : Activity() {
         section =
             RelatedWorksView(
                 this,
-                episodes,
+                episodes.takeLast((episodes.size - 1) % perRow + 1),
                 ::loadCover,
                 cloudAccount::reservationLabel,
                 { related, anchor ->
@@ -3188,7 +3190,7 @@ class MainActivity : Activity() {
             cloudAccount.refreshFavorites()
         if (focusEpisode)
             episodes
-                .getOrNull((episodeIndex - group * 20).coerceIn(0, episodes.lastIndex))
+                .getOrNull((episodeIndex - group * EpisodeGrouping.size).coerceIn(0, episodes.lastIndex))
                 ?.requestFocus()
         else play.requestFocus()
     }
@@ -3398,7 +3400,7 @@ class MainActivity : Activity() {
         if (autoplay) sleepStopped = false
         screen = "player"
         episodeIndex = selectedIndex
-        group = episodeIndex / 20
+        group = episodeIndex / EpisodeGrouping.size
         panel = false
         playError = false
         playbackReady = false
@@ -3986,7 +3988,7 @@ class MainActivity : Activity() {
         video = next
         playbackHttp = queuedHttp
         episodeIndex = queuedEpisode
-        group = episodeIndex / 20
+        group = episodeIndex / EpisodeGrouping.size
         queuedNext = null
         queuedHttp = null
         queuedEpisode = -1
@@ -4321,22 +4323,20 @@ class MainActivity : Activity() {
     private fun showSleepPicker(anchor: TextView) {
         val labels =
             listOf("关闭定时停止", "15 分钟后", "30 分钟后", "60 分钟后", "90 分钟后", "本集播完", "再播完 3 集", "再播完 5 集")
-        tvTools.choose(
-            "定时停止 · ${sleepTimer.label()}",
-            labels,
-            anchor,
-            { choice ->
-                when (choice) {
-                    0 -> sleepTimer.cancel()
-                    in 1..4 -> sleepTimer.afterMinutes(listOf(15, 30, 60, 90)[choice - 1])
-                    else -> sleepTimer.afterEpisodes(listOf(1, 3, 5)[choice - 5])
-                }
-                if (sleepTimer.episodesLeft == 1) cancelPrefetch()
-                if (anchor.tag != "playback-settings") anchor.text = "定时 ${sleepTimer.label()}"
-                updatePlaybackText()
-                showHud()
-            },
-        )
+        val choose: (Int) -> Unit = { choice ->
+            when (choice) {
+                0 -> sleepTimer.cancel()
+                in 1..4 -> sleepTimer.afterMinutes(listOf(15, 30, 60, 90)[choice - 1])
+                else -> sleepTimer.afterEpisodes(listOf(1, 3, 5)[choice - 5])
+            }
+            if (sleepTimer.episodesLeft == 1) cancelPrefetch()
+            if (anchor.tag != "playback-settings") anchor.text = "定时 ${sleepTimer.label()}"
+            updatePlaybackText()
+            showHud()
+        }
+        val title = "定时停止 · ${sleepTimer.label()}"
+        if (TvStyle.touch) tvTools.choose(title, labels, anchor, choose)
+        else tvTools.chooseGrid(title, labels, -1, anchor, choose)
     }
 
     private fun frameResizeMode() =
@@ -4434,6 +4434,10 @@ class MainActivity : Activity() {
         addPlaybackRow(options)
         lateinit var episodes: TextView
         episodes = addButton(options, "选集") { showEpisodePanel(episodes) }
+        val related = if (!TvStyle.touch) addButton(options, "相关作品") {
+            returnToDetail(forceDetail = true)
+            relatedSection?.focusEntry()
+        } else null
         lateinit var commentsButton: TextView
         commentsButton = addButton(options, "评论") { social.showComments(commentsButton) }
         lateinit var danmakuButton: TextView
@@ -4482,11 +4486,22 @@ class MainActivity : Activity() {
                 }
                 .apply { tag = "playback-settings" }
         if (compact)
-            listOf(episodes, commentsButton, danmakuButton, more).forEach {
+            listOfNotNull(episodes, related, commentsButton, danmakuButton, more).forEach {
                 it.textSize = 12f
                 it.setPadding(dp(8), dp(10), dp(8), dp(10))
             }
-        if (!TvStyle.touch) play.requestFocus()
+        if (!TvStyle.touch) {
+            val actions = listOfNotNull(episodes, related, commentsButton, danmakuButton, more)
+            val transportActions = (0 until transport.childCount).map { transport.getChildAt(it) }.filter { it.isFocusable }
+            actions.forEachIndexed { index, view ->
+                view.nextFocusLeftId = actions.getOrNull(index - 1)?.id ?: view.id
+                view.nextFocusRightId = actions.getOrNull(index + 1)?.id ?: view.id
+                view.nextFocusUpId = transportActions[minOf(index, transportActions.lastIndex)].id
+                view.nextFocusDownId = view.id
+            }
+            transportActions.forEachIndexed { index, view -> view.nextFocusDownId = actions[minOf(index, actions.lastIndex)].id }
+            play.requestFocus()
+        }
     }
 
     private fun showSpeedPicker(anchor: TextView, inPlayer: Boolean = true) {
