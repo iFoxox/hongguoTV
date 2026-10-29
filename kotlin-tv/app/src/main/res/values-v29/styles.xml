@@ -1,0 +1,9 @@
+<resources>
+    <!-- 应用自行配色，禁止系统强制深色再次反色弹窗。API 23/26 沿用基础主题。 -->
+    <style name="AppDialogLight" parent="AppDialogLightBase">
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
+    <style name="AppDialogDark" parent="AppDialogDarkBase">
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
+</resources>

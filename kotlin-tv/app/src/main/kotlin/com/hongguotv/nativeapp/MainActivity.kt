@@ -2640,7 +2640,8 @@ class MainActivity : Activity() {
                 tvTools.info(
                     "关于果映 TV",
                     "hongguoTV · 非官方客户端\n作者：tsukiyo-zero\n版本：${BuildConfig.VERSION_NAME}\n" +
-                        (if (BuildConfig.DEBUG) "测试构建：${InteractionMode.TEST_BUILD}\n" else "") +
+                        (if (BuildConfig.LOCAL_BUILD_LABEL.isNotEmpty()) "构建标识：${BuildConfig.LOCAL_BUILD_LABEL}\n"
+                        else if (BuildConfig.DEBUG) "测试构建：${InteractionMode.TEST_BUILD}\n" else "") +
                         "界面模式：${InteractionMode.label(this)}\n项目：https://github.com/tsukiyo-zero/hongguoTV\n\n本应用与红果官方无隶属关系。",
                     about,
                 )

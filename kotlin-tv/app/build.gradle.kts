@@ -14,6 +14,10 @@ val signingProperties =
 fun signingValue(env: String, key: String): String? =
     System.getenv(env) ?: signingProperties.getProperty(key)
 
+// 本地验收包可在「关于」显示标识，避免同版本号的不同构建混淆；正式发布默认留空。
+val localBuildLabel = System.getenv("HONGGUOTV_BUILD_LABEL")
+    ?.takeIf { it.matches(Regex("[A-Za-z0-9._-]{1,80}")) }.orEmpty()
+
 android {
     namespace = "com.hongguotv.nativeapp"
     compileSdk = 36
@@ -23,6 +27,7 @@ android {
         targetSdk = 36
         versionCode = System.getenv("HONGGUOTV_VERSION_CODE")?.toInt() ?: 54
         versionName = System.getenv("HONGGUOTV_VERSION_NAME") ?: "0.1.13"
+        buildConfigField("String", "LOCAL_BUILD_LABEL", "\"$localBuildLabel\"")
     }
     buildFeatures { buildConfig = true }
     testOptions {

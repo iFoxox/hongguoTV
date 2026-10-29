@@ -56,7 +56,7 @@ class DialogReadabilityTest {
                 val id=dialog.context.resources.getIdentifier(name,"id","android")
                 if(id==0) continue
                 val panel=decor.findViewById<View>(id) ?: continue
-                assertEquals(name,if(name=="parentPanel") SurfaceStyle.surface else Color.TRANSPARENT,
+                assertEquals(name,Color.TRANSPARENT,
                     (panel.background as ColorDrawable).color)
             }
         }

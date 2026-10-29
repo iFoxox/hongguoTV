@@ -1,5 +1,6 @@
 <resources><style name="AppTheme" parent="android:style/Theme.Material.NoActionBar"><item name="android:fontFamily">sans</item><item name="android:windowActionModeOverlay">true</item><item name="android:colorAccent">#FF8964</item><item name="android:windowBackground">#0B0F15</item><item name="android:windowLightStatusBar">false</item><item name="android:windowNoTitle">true</item></style>
-<style name="AppDialogLight" parent="android:style/Theme.Material.Light.Dialog.Alert">
+<style name="AppDialogLight" parent="AppDialogLightBase"/>
+<style name="AppDialogLightBase" parent="android:style/Theme.Material.Light.Dialog.Alert">
     <item name="android:colorBackground">#FAFCFE</item>
     <item name="android:colorBackgroundFloating">#FAFCFE</item>
     <item name="android:windowBackground">#FAFCFE</item>
@@ -12,7 +13,8 @@
     <item name="android:textColorSecondary">#62626A</item>
     <item name="android:windowSoftInputMode">adjustResize</item>
 </style>
-<style name="AppDialogDark" parent="android:style/Theme.Material.Dialog.Alert">
+<style name="AppDialogDark" parent="AppDialogDarkBase"/>
+<style name="AppDialogDarkBase" parent="android:style/Theme.Material.Dialog.Alert">
     <item name="android:colorBackground">#282E38</item>
     <item name="android:colorBackgroundFloating">#282E38</item>
     <item name="android:windowBackground">#282E38</item>

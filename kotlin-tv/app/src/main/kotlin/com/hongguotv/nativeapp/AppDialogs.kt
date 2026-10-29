@@ -6,6 +6,8 @@ import android.app.Dialog
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.os.Build
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
@@ -28,7 +30,8 @@ internal object AppDialogs {
         override fun onStop() { styling.stop(); super.onStop() }
     }
 
-    private class Styling(private val popup: Dialog) : View.OnAttachStateChangeListener, ViewTreeObserver.OnGlobalLayoutListener {
+    private class Styling(private val popup: Dialog) : View.OnAttachStateChangeListener,
+        ViewTreeObserver.OnGlobalLayoutListener, ViewTreeObserver.OnPreDrawListener {
         private var observer: ViewTreeObserver? = null
         private var bound = false
         fun bind() {
@@ -42,18 +45,52 @@ internal object AppDialogs {
             popup.window?.decorView?.viewTreeObserver?.let {
                 observer = it
                 it.addOnGlobalLayoutListener(this)
+                it.addOnPreDrawListener(this)
             }
         }
         override fun onViewAttachedToWindow(view: View) = start()
         fun stop() {
-            observer?.takeIf { it.isAlive }?.removeOnGlobalLayoutListener(this)
+            observer?.takeIf { it.isAlive }?.let {
+                it.removeOnGlobalLayoutListener(this)
+                it.removeOnPreDrawListener(this)
+            }
             observer = null
         }
         override fun onViewDetachedFromWindow(view: View) = stop()
         override fun onGlobalLayout() {
             // 列表回收及网络加载会在 onShow 之后创建新文字，不能只着色首次的视图树。
+            chrome(popup)
             popup.window?.decorView?.let(::colors)
         }
+        override fun onPreDraw(): Boolean {
+            // 固件可能在布局后重设背景；绘制前再校正，避免显示黑底深字的一帧。
+            onGlobalLayout()
+            return true
+        }
+    }
+
+    private fun background(view: View, color: Int) {
+        if (view.backgroundTintList != null) view.backgroundTintList = null
+        if ((view.background as? ColorDrawable)?.color != color) view.setBackgroundColor(color)
+    }
+
+    private fun chrome(popup: Dialog) {
+        val decor = popup.window?.decorView ?: return
+        // 应用已自行提供浅／深主题，不能再由 Android 10+ 按系统夜间模式反色。
+        if (Build.VERSION.SDK_INT >= 29) decor.isForceDarkAllowed = false
+        if (decor.backgroundTintList != null) decor.backgroundTintList = null
+        val content = decor.findViewById<View>(android.R.id.content)
+        content?.let { background(it, SurfaceStyle.surface) }
+        if (popup !is AlertDialog) return
+        fun panels(view: View) {
+            if (view !is ViewGroup) return
+            if (view !== decor && view !== content) background(view, Color.TRANSPARENT)
+            // custom 是公开的 Android ID。应用自己的二维码、按钮及内容底色必须保留；
+            // ListView 的 selector 和行背景也保留，以免破坏遥控器焦点与勾选反馈。
+            if (view.id == android.R.id.custom || view is ListView) return
+            for (i in 0 until view.childCount) panels(view.getChildAt(i))
+        }
+        panels(decor)
     }
 
     private fun colors(view: View) {
@@ -105,15 +142,9 @@ internal object AppDialogs {
                 cornerRadius=dp(16).toFloat()
             })
             window.setDimAmount(.32f)
-            // 部分 TV 固件会给 AlertDialog 内部面板单独铺系统底色，遮住 Window 的主题底板。
-            window.decorView.findViewById<View>(android.R.id.content)?.setBackgroundColor(Color.TRANSPARENT)
+            // 内容区也必须有不透明底板；不能只处理窗口或依赖固件内部的私有面板名称。
+            chrome(popup)
             if (popup is AlertDialog) {
-                listOf("parentPanel", "topPanel", "contentPanel", "customPanel", "buttonPanel").forEach { name ->
-                    val id = context.resources.getIdentifier(name, "id", "android")
-                    if (id != 0) window.decorView.findViewById<View>(id)?.setBackgroundColor(
-                        if (name == "parentPanel") SurfaceStyle.surface else Color.TRANSPARENT
-                    )
-                }
                 if(TvStyle.touch) window.setLayout(minOf(dp(560),(context.resources.displayMetrics.widthPixels*.92f).toInt()),-2)
             }
             colors(window.decorView)
