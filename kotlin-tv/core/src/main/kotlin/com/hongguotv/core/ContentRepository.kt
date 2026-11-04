@@ -644,6 +644,44 @@ constructor(
         return Detail(card(o).copy(id = id), episodes)
     }
 
+    /** Official video-tab model; keep the legacy batch route as a bounded fallback. */
+    private fun tabVideoModel(id: String, identity: PlaybackDeviceSession.Profile): JSONObject? {
+        val values = identity.values + mapOf(
+            "_rticket" to clock().toString(),
+            "video_id" to id,
+            "video_id_type" to "0",
+            "device_level" to "1",
+            "need_all_video_definition" to "1",
+            "need_mp4_align" to "0",
+            "use_os_player" to "0",
+            "video_platform" to "1024",
+            "source" to "0",
+            "from_video_id" to "",
+        )
+        val url = "https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/video_tab/multi_video_model/v1/?${Signer.encode(values)}"
+        val headers = mapOf(
+            "User-Agent" to "com.phoenix.read/71532 (Linux; U; Android 9; SM-N9860; Build/PQ3A.190705.10241111;tt-ok/3.12.13.20)",
+            "Accept" to "application/json; charset=utf-8",
+        ) + if (identity.cookie.isBlank()) emptyMap() else mapOf("Cookie" to identity.cookie)
+        val response = try {
+            text(url, Signer.Request(url, headers, null))
+        } catch (problem: IOException) {
+            if (Thread.currentThread().isInterrupted || problem.message == "请求已取消") throw problem
+            if (problem is ContentHttpException && problem.statusCode in setOf(401, 403, 429)) throw problem
+            return null
+        }
+        val root = runCatching { JSONObject(response) }.getOrNull() ?: return null
+        if (root.optInt("code", root.optInt("Code", -1)) != 0) return null
+        val data = root.optJSONObject("data") ?: return null
+        val rows = data.optJSONObject("video_model_data") ?: data
+        val row = rows.optJSONObject(id) ?: return null
+        val model = row.optJSONObject("video_model")
+            ?: runCatching { JSONObject(row.optString("video_model")) }.getOrNull()
+            ?: return null
+        if ((model.optJSONArray("video_list")?.length() ?: 0) == 0) return null
+        return JSONObject().put("video_model", model)
+    }
+
     fun stream(
         id: String,
         maxQuality: Int = 1080,
@@ -673,10 +711,11 @@ constructor(
             cached
                 ?: run {
                     val ids = (listOf(id) + metadataAhead).distinct()
+                    val identity = playbackSession.profile(http)
+                    tabVideoModel(id, identity)?.let { return@run it }
                     val payload =
                         """{"biz_param":{"detail_page_version":0,"device_level":3,"disable_digg_stat":false,"need_all_video_definition":true,"need_mp4_align":false,"use_os_player":false,"use_server_dns":false,"video_platform":1024},"mixed_video_id_map":{"1004":${JSONArray(ids)}}}"""
                             .toByteArray()
-                    val identity = playbackSession.profile(http)
                     val query = Signer.encode(identity.values + ("_rticket" to clock().toString()))
                     val playerUrl =
                         "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/?$query"

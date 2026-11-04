@@ -540,7 +540,8 @@ class ContentRepositoryTest {
                         .protocol(Protocol.HTTP_1_1)
                         .code(200)
                         .message("OK")
-                        .body(respond(chain.request()).toResponseBody())
+                        .body((if (chain.request().url.encodedPath == "/reading/bookapi/video_tab/multi_video_model/v1/")
+                            """{"code":100103}""" else respond(chain.request())).toResponseBody())
                         .build()
                 }
                 .build(),
