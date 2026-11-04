@@ -75,4 +75,34 @@ class InteractionModeTest {
             assertEquals(listOf("首页","观看历史","排行榜","我的"),labels)
         } finally { c.destroy() }
     }
+
+    @Test fun phoneAndTvSettingsBothExposeTheInterfaceModeControl() {
+        for (mode in listOf(InteractionMode.Mode.MOBILE, InteractionMode.Mode.TV)) {
+            InteractionMode.save(context, mode)
+            val controller = Robolectric.buildActivity(MainActivity::class.java).create()
+            try {
+                val activity = controller.get()
+                val library = MainActivity::class.java.getDeclaredField("library")
+                    .apply { isAccessible = true }.get(activity) as Library
+                val loader = Library::class.java.getDeclaredField("loader")
+                    .apply { isAccessible = true }.get(library) as java.util.concurrent.ExecutorService
+                loader.submit {}.get(5, java.util.concurrent.TimeUnit.SECONDS)
+                org.robolectric.shadows.ShadowLooper.idleMainLooper()
+                val parent = MainActivity::class.java.getDeclaredMethod("catalogPage")
+                    .apply { isAccessible = true }.invoke(activity) as android.widget.LinearLayout
+                MainActivity::class.java.getDeclaredMethod("settings", android.widget.LinearLayout::class.java)
+                    .apply { isAccessible = true }.invoke(activity, parent)
+                fun findMode(view: View): TextView? {
+                    if (view is TextView && view.text.startsWith("界面模式")) return view
+                    if (view is ViewGroup) for (index in 0 until view.childCount) {
+                        findMode(view.getChildAt(index))?.let { return it }
+                    }
+                    return null
+                }
+                val control = findMode(parent)
+                assertNotNull("Missing interface mode setting for $mode", control)
+                assertTrue(control!!.hasOnClickListeners())
+            } finally { controller.destroy() }
+        }
+    }
 }

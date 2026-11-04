@@ -1,5 +1,8 @@
 # 原生版第三方声明
 
+2026-11-04 播放接口适配参考 tsukiyo-zero/hongguoTV 的 `8fc02a4` 提交：
+https://github.com/tsukiyo-zero/hongguoTV/commit/8fc02a4 。在本 fork 手机／TV 共用的 ContentRepository 中适配 video_tab 路径及查询字段，保留本地有界响应读取、取消、权限／限流处理和旧接口回退；只接受匹配分集 ID 的模型。没有用上游 TV 界面替换本 fork 手机界面。
+
 本地播放兼容修改参考 FanchangWang 的 GPL-3.0 项目贡献：
 https://github.com/N3urda/hongguoTV/pull/22 。播放请求使用独立设备标识和无签名请求，复用本项目原有的响应大小限制、请求取消及媒体解析逻辑。
 

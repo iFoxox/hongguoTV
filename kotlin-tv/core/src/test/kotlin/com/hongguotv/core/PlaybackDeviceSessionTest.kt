@@ -32,6 +32,8 @@ class PlaybackDeviceSessionTest {
                             assertNull(request.header("Cookie"))
                             assertNull(request.header("x-gorgon"))
                             """{"device_id":"333","install_id":"444"}"""
+                        } else if (request.url.encodedPath == "/reading/bookapi/video_tab/multi_video_model/v1/") {
+                            """{"code":100103}"""
                         } else {
                             requests += request
                             assertEquals("333", request.url.queryParameter("device_id"))
