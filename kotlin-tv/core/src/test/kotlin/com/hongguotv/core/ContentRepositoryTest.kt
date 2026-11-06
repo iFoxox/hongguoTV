@@ -83,6 +83,32 @@ class ContentRepositoryTest {
         assertEquals(3, registrations.get())
     }
 
+    @Test
+    fun rotatedIdentityTriesPreferredEndpointBeforeLegacyFallback() {
+        var registrations = 0
+        val requests = mutableListOf<Request>()
+        val http = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests += request
+            val body = if (request.url.queryParameter("device_id") == "334" && request.method == "GET")
+                videoTabModel else ""
+            fixtureResponse(request, body)
+        }.build()
+        val session = PlaybackDeviceSession {
+            registrations++
+            DeviceRegister.Registered((332 + registrations).toString(), "444")
+        }
+        val repo = ContentRepository(http, playbackSession = session, sleep = {})
+        repeat(2) {
+            assertThrows(EmptyPlaybackResponseException::class.java) { repo.streamLadder("123") }
+        }
+        val attemptsBeforeRotation = requests.size
+        assertEquals(720, repo.streamLadder("123").renditions.single().quality)
+        val recovered = requests.drop(attemptsBeforeRotation).single()
+        assertEquals("GET", recovered.method)
+        assertEquals("334", recovered.url.queryParameter("device_id"))
+    }
+
     private val videoTabModel =
         """{"code":0,"message":"SUCCESS","data":{"video_model_data":{"123":{"video_model":{"video_list":[{"main_url":"https://example.test/video","video_meta":{"definition":"720p","codec_type":"h264","vwidth":720,"vheight":1280},"encrypt_info":{"encrypt":false}}]}}}}}"""
 

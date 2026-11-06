@@ -235,7 +235,7 @@ internal class PublicFeedBackend(
         )
     }
 
-    override fun trial(series: Series): TrialClip {
+    private fun loadTrial(series: Series): TrialClip {
         val hint =
             synchronized(trialHints) { trialHints[series.id] }
                 ?: run {
@@ -274,7 +274,18 @@ internal class PublicFeedBackend(
 
     // Publish the prepared header immediately. Media3 preloads samples according to duration;
     // a foreground switch must not wait for an additional fixed 1 MiB speculative download.
-    override fun preload(series: Series): TrialClip = trial(series)
+    override fun preload(series: Series): TrialClip = loadTrial(series)
+
+    override fun trial(series: Series): TrialClip {
+        repeat(2) {
+            try {
+                return loadTrial(series)
+            } catch (problem: com.hongguotv.core.EmptyPlaybackResponseException) {
+                if (closed.get() || Thread.currentThread().isInterrupted) throw problem
+            }
+        }
+        return loadTrial(series)
+    }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return

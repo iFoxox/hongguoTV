@@ -811,6 +811,14 @@ constructor(
             cached
                 ?: run {
                     val ids = (listOf(id) + metadataAhead).distinct()
+                    val rotateIdentity =
+                        synchronized(playbackIdentityLock) {
+                            val eligible = emptyPlaybackRounds >= IDENTITY_ROTATE_ROUNDS && !emptyPlaybackRotated
+                            if (eligible) emptyPlaybackRotated = true
+                            eligible
+                        }
+                    // A fresh identity must be tried on video_tab as well as the legacy route.
+                    if (rotateIdentity) playbackSession.rotate(http)
                     // GET video_tab 优先（官方 App 现行路径，2026-11-05 起对无签名请求短路返回
                     // 空正文）；失败时回退签名 POST 旧接口，两条路径共用同一注册身份。
                     val identity = playbackSession.profile(http)
@@ -834,17 +842,6 @@ constructor(
                     //（被屏蔽身份全部路径 100% 空且贯穿事件全程，全新身份即时恢复），因此连续
                     // 两轮换路全空后轮换一次匿名设备身份，详见规格
                     // HOME_FEED.md。
-                    val rotated =
-                        synchronized(playbackIdentityLock) {
-                            val eligible = emptyPlaybackRounds >= IDENTITY_ROTATE_ROUNDS && !emptyPlaybackRotated
-                            if (eligible) emptyPlaybackRotated = true
-                            eligible
-                        }
-                    if (rotated) {
-                        // 网络 I/O 在锁外；无论成败都视为本失败期已轮换，不重复尝试。
-                        playbackSession.rotate(http)
-                    }
-                    val requestIdentity = playbackSession.profile(http)
                     var content: String? = null
                     var lastError: IOException? = null
                     var allEmpty = true
@@ -862,7 +859,7 @@ constructor(
                         tried += PlayRetryPlan.tag(host)
                         val request = playbackRequest(
                             "https://$host/novel/player/multi_video_model/v1/",
-                            requestIdentity, body = payload,
+                            identity, body = payload,
                         ).apply {
                             if (PlayRetryPlan.freshConnection(attempt)) header("Connection", "close")
                         }
