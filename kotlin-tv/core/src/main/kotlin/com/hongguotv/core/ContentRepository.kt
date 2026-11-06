@@ -704,15 +704,18 @@ constructor(
      * 失败（非 0 code、空正文、结构不符、网络异常）一律返回 null，由调用方回退签名 POST 旧接口，
      * 不改变既有的空响应恢复与身份轮换语义。
      */
-    private fun tabVideoModel(id: String, identity: PlaybackDeviceSession.Profile): JSONObject? {
+    private fun tabVideoModel(
+        id: String,
+        identity: PlaybackDeviceSession.Profile,
+        host: String = PlayRetryPlan.hosts.first(),
+    ): JSONObject? {
         val extra = mapOf(
             "video_id" to id, "video_id_type" to "0", "device_level" to "1",
             "need_all_video_definition" to "1", "need_mp4_align" to "0",
             "use_os_player" to "0", "video_platform" to "1024", "source" to "0",
             "from_video_id" to "",
         )
-        // One preferred request; the legacy path retains the bounded cross-host retry budget.
-        for (host in listOf(PlayRetryPlan.hosts.first())) {
+        return run {
             val request = playbackRequest(
                 "https://$host/reading/bookapi/video_tab/multi_video_model/v1/",
                 identity, extra,
@@ -725,26 +728,25 @@ constructor(
                         throw problem
                     if (problem is ContentHttpException && problem.statusCode in setOf(401, 403, 429))
                         throw problem
-                    continue
+                    return@run null
                 } catch (problem: RuntimeException) {
-                    continue
+                    return@run null
                 }
-            val root = runCatching { JSONObject(text) }.getOrNull() ?: continue
-            if (root.optInt("code", root.optInt("Code", -1)) != 0) continue
-            val data = root.optJSONObject("data") ?: continue
+            val root = runCatching { JSONObject(text) }.getOrNull() ?: return@run null
+            if (root.optInt("code", root.optInt("Code", -1)) != 0) return@run null
+            val data = root.optJSONObject("data") ?: return@run null
             val rows = data.optJSONObject("video_model_data") ?: data
-            val row = rows.optJSONObject(id) ?: continue
-            val raw = row.opt("video_model") ?: continue
+            val row = rows.optJSONObject(id) ?: return@run null
+            val raw = row.opt("video_model") ?: return@run null
             val model =
                 (when (raw) {
                     is JSONObject -> raw
                     is String -> runCatching { JSONObject(raw) }.getOrNull()
                     else -> null
-                }) ?: continue
-            if ((model.optJSONArray("video_list")?.length() ?: 0) == 0) continue
-            return JSONObject().put("video_model", model)
+                }) ?: return@run null
+            if ((model.optJSONArray("video_list")?.length() ?: 0) == 0) return@run null
+            JSONObject().put("video_model", model)
         }
-        return null
     }
 
     /** 诊断旁路：返回原始 video_list 各档（含 bytevc2），不参与正式播放路径；relay 探针专用。 */
@@ -875,12 +877,17 @@ constructor(
                     }
                     // 全部尝试耗尽时直接抛出（带计数与 host 代号），保持 response 为纯文本。
                     // 空响应整轮耗尽计入身份屏蔽计数；拿到有效响应则复位轮换状态。
-                    if (content != null) {
+                    val alternateModel =
+                        if (content == null && allEmpty)
+                            tabVideoModel(id, identity, PlayRetryPlan.alternateVideoTabHost)
+                        else null
+                    if (content != null || alternateModel != null) {
                         synchronized(playbackIdentityLock) {
                             emptyPlaybackRounds = 0
                             emptyPlaybackRotated = false
                         }
                     }
+                    if (alternateModel != null) return@run alternateModel
                     val response =
                         content
                             ?: throw (lastError?.let { error ->

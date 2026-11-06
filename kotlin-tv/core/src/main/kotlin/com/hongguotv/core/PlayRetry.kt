@@ -11,11 +11,13 @@ import java.io.IOException
  * 连接，退避从 2.2 秒拉长到约 5 秒（含请求时间约 7 秒），让重试有机会落到窗口外的路径上。
  */
 internal object PlayRetryPlan {
+    const val alternateVideoTabHost = "api5-normal-lf.fqnovel.com"
+
     val hosts =
         listOf(
             "api5-normal-sinfonlineb.fqnovel.com",
             "api5-normal-hl.fqnovel.com",
-            "api5-normal-lf.fqnovel.com",
+            alternateVideoTabHost,
         )
 
     /** 第 1 次尝试后各次重试前的退避；三次重试合计 5.2 秒。 */

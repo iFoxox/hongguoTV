@@ -109,6 +109,30 @@ class ContentRepositoryTest {
         assertEquals("334", recovered.url.queryParameter("device_id"))
     }
 
+    @Test
+    fun emptyLegacyResponsesRecoverThroughSignedAlternateVideoTab() {
+        val requests = mutableListOf<Request>()
+        val http = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests += request
+            val body = if (request.method == "GET" &&
+                request.url.host == "api5-normal-lf.fqnovel.com") videoTabModel else ""
+            fixtureResponse(request, body)
+        }.build()
+        val session = PlaybackDeviceSession {
+            DeviceRegister.Registered("333", "444", cookies = mapOf("ttreq" to "fixture"))
+        }
+        val repo = ContentRepository(http, playbackSession = session, sleep = {})
+        assertEquals(720, repo.streamLadder("123").renditions.single().quality)
+        val alternate = requests.last()
+        assertEquals("GET", alternate.method)
+        assertEquals("api5-normal-lf.fqnovel.com", alternate.url.host)
+        assertEquals(requests.first().url.encodedPath, alternate.url.encodedPath)
+        assertEquals("333", alternate.url.queryParameter("device_id"))
+        assertEquals("ttreq=fixture", alternate.header("Cookie"))
+        assertFalse(alternate.header("x-medusa").isNullOrBlank())
+    }
+
     private val videoTabModel =
         """{"code":0,"message":"SUCCESS","data":{"video_model_data":{"123":{"video_model":{"video_list":[{"main_url":"https://example.test/video","video_meta":{"definition":"720p","codec_type":"h264","vwidth":720,"vheight":1280},"encrypt_info":{"encrypt":false}}]}}}}}"""
 
