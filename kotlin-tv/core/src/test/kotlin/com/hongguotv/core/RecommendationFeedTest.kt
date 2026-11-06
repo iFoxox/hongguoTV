@@ -10,6 +10,40 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RecommendationFeedTest {
+    @Test
+    fun displayedSnapshotDoesNotWaitForThePaginationNetworkLock() {
+        val cursor = RecommendationCursor()
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try {
+            val network = pool.submit {
+                synchronized(cursor) {
+                    entered.countDown()
+                    check(release.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                }
+            }
+            assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            val display = pool.submit<String> { cursor.markSeen("101"); cursor.snapshot() }
+            val saved = display.get(2, java.util.concurrent.TimeUnit.SECONDS)
+            assertTrue(saved.contains("101"))
+            assertFalse(network.isDone)
+        } finally { release.countDown(); pool.shutdownNow() }
+    }
+
+    @Test
+    fun concurrentDisplayedAndFetchedIdsKeepSnapshotsBoundedAndReadable() {
+        val cursor = RecommendationCursor()
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try {
+            val display = pool.submit { repeat(1000) { cursor.markSeen(it.toString()); cursor.snapshot() } }
+            val fetched = pool.submit { repeat(1000) { cursor.remember(listOf((1000 + it).toString())); cursor.seenIds() } }
+            display.get(10, java.util.concurrent.TimeUnit.SECONDS)
+            fetched.get(10, java.util.concurrent.TimeUnit.SECONDS)
+            assertTrue(JSONObject(cursor.snapshot()).getJSONArray("seen").length() <= 540)
+            assertTrue(RecommendationCursor().restore(cursor.snapshot()))
+        } finally { pool.shutdownNow() }
+    }
     private fun response(id: String = "101", tab: Int = 16, wrapped: Boolean = false): String {
         val row =
             JSONObject()
@@ -112,7 +146,9 @@ class RecommendationFeedTest {
         assertSame(second, RecommendationFeed(http, cursor = cursor).page(2))
         assertEquals(2, requests.size)
         RecommendationFeed(http, cursor = cursor.nextBatch()).page(1)
-        assertEquals(listOf("0", "1", "2"), requests.map { it.url.queryParameter("offset") })
+        // offset 按「一条响应实际下发的条数」前进（fixture 每轮 2 条），而不是固定 +1，
+        // 否则会与上一页大面积重叠。
+        assertEquals(listOf("0", "2", "4"), requests.map { it.url.queryParameter("offset") })
         assertNull(requests[0].header("Cookie"))
         assertNull(requests[0].url.queryParameter("device_id"))
         assertEquals("test-page-session", requests[1].url.queryParameter("session_id"))
@@ -145,6 +181,49 @@ class RecommendationFeedTest {
     }
 
     @Test
+    fun recommendationErrorRotatesHostsAndResetsServerCursor() {
+        val requests = mutableListOf<Request>()
+        val http =
+            OkHttpClient.Builder()
+                .addInterceptor { chain ->
+                    requests += chain.request()
+                    val body =
+                        when (requests.size) {
+                            1 -> response("101")
+                            3 -> response("101")
+                            4 -> response("102")
+                            else -> """{"code":110}"""
+                        }
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(body.toResponseBody())
+                        .build()
+                }
+                .build()
+        val feed = RecommendationFeed(http)
+        assertEquals("101", feed.page(1).items.single().id)
+        assertEquals("102", feed.page(2).items.single().id)
+        val hosts =
+            listOf(
+                "api5-normal-sinfonlinea.fqnovel.com",
+                "api5-normal-hl.fqnovel.com",
+                "api5-normal-lf.fqnovel.com",
+            )
+        assertEquals(hosts, requests.drop(1).map { it.url.host })
+        assertEquals("test-page-session", requests[1].url.queryParameter("session_id"))
+        assertNull(requests[2].url.queryParameter("session_id"))
+        assertEquals("0", requests[2].url.queryParameter("offset"))
+        assertEquals("1", requests[2].url.queryParameter("client_req_type"))
+
+        val failure = assertThrows(IOException::class.java) { RecommendationFeed(http).page(1) }
+        assertEquals("推荐暂不可用（错误码 110），请稍后刷新", failure.message)
+        assertEquals(hosts, requests.drop(4).map { it.url.host })
+    }
+
+    @Test
     fun accountIdentityIsSentOnlyToOfficialFeedAndGuestCursorIsSeparate() {
         var requested: Request? = null
         val http =
@@ -165,7 +244,9 @@ class RecommendationFeedTest {
         RecommendationFeed(http, account).page(1)
         assertEquals("api5-normal-sinfonlinea.fqnovel.com", requested!!.url.host)
         assertEquals(account.cookie, requested!!.header("Cookie"))
-        assertEquals("test-device", requested!!.url.queryParameter("device_id"))
+        // 账号态只带 Cookie：再带 device_id 会被 feed 接口判 110 ILLEGAL_ACCESS。
+        assertNull(requested!!.url.queryParameter("device_id"))
+        assertNull(requested!!.url.queryParameter("iid"))
         RecommendationFeed(http).page(1)
         assertNull(requested!!.header("Cookie"))
         assertNull(requested!!.url.queryParameter("session_id"))
@@ -308,5 +389,59 @@ class RecommendationFeedTest {
                 .build()
         val page = RecommendationFeed(http).page(1)
         assertEquals(listOf("101"), page.items.map { it.id })
+    }
+
+    /** 服务端判定旧分页会话不合法（如 110）时，丢弃 session 从头拉一次，而不是持续报错。 */
+    @Test
+    fun stalePagingSessionIsDroppedAndRetriedFromTheStart() {
+        val requests = mutableListOf<Request>()
+        val http =
+            OkHttpClient.Builder()
+                .addInterceptor { chain ->
+                    val request = chain.request()
+                    requests += request
+                    val body =
+                        if (requests.size == 1) """{"code":110,"data":null}"""
+                        else response("301")
+                    Response.Builder()
+                        .request(request)
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(body.toResponseBody())
+                        .build()
+                }
+                .build()
+        val cursor = RecommendationCursor()
+        cursor.session = "stale-session"
+        cursor.offset = 3
+        val page = RecommendationFeed(http, cursor = cursor).page(1)
+        assertEquals(1, page.items.size)
+        assertEquals(2, requests.size)
+        assertEquals("stale-session", requests[0].url.queryParameter("session_id"))
+        // 重试同时换到备用域名，避免反复打同一个被限流的节点。
+        assertNotEquals(requests[0].url.host, requests[1].url.host)
+        assertNull(requests[1].url.queryParameter("session_id"))
+        assertEquals("0", requests[1].url.queryParameter("offset"))
+        assertEquals("1", requests[1].url.queryParameter("client_req_type"))
+    }
+
+    /** 冷启动续刷依赖快照往返；异常输入必须被拒绝而不是污染游标。 */
+    @Test
+    fun cursorSnapshotRoundTripsAndRejectsGarbage() {
+        val cursor = RecommendationCursor()
+        cursor.session = "sess-1"
+        cursor.offset = 18
+        cursor.seen.addAll(listOf("a", "b", "c"))
+        val saved = cursor.snapshot()
+        val restored = RecommendationCursor()
+        assertTrue(restored.restore(saved))
+        assertEquals("sess-1", restored.session)
+        assertEquals(18, restored.offset)
+        assertTrue(restored.seen.containsAll(listOf("a", "b", "c")))
+        assertFalse(RecommendationCursor().restore("not-json"))
+        assertFalse(RecommendationCursor().restore("""{"session":"","offset":-5}"""))
+        val tooLong = """{"session":"${"x".repeat(5000)}","offset":0}"""
+        assertFalse(RecommendationCursor().restore(tooLong))
     }
 }

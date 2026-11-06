@@ -136,8 +136,12 @@ class CloudAccountTest {
         assertTrue(login.trace.isEmpty())
     }
 
+    /**
+     * `error_code 1` 是端点不适用（validate_code 对未登录会话固定回它），要继续试后续端点，
+     * 且不能把会话标记成不可再用——否则用户换一个验证码也没机会。
+     */
     @Test
-    fun expiredLoginSessionCannotSubmitTheSameCodeAgain() {
+    fun sessionExpiredErrorIsTreatedAsEndpointMismatch() {
         var calls = 0
         val login =
             PhoneLogin(
@@ -153,9 +157,20 @@ class CloudAccountTest {
         val first = assertThrows(PhoneLogin.Failure::class.java) { login.verify("123456") }
         assertEquals(1, first.errorCode)
         assertFalse(first.canRetryCode)
-        assertTrue(login.cookies.isEmpty())
-        assertEquals("", login.ticket)
-        assertThrows(PhoneLogin.Failure::class.java) { login.verify("123456") }
-        assertEquals(1, calls)
+        assertEquals(5, calls)
+        assertEquals("test-ticket", login.ticket)
+        assertTrue(login.cookies.isNotEmpty())
+    }
+
+    /** 会话有效但业务账号未建立时给出可操作的提示，而不是笼统的“重新登录”。 */
+    @Test
+    fun sessionWithoutBusinessAccountReportsProvisioningHint() {
+        val client = CloudAccountClient(http { """{"code":0,"data":{"biz_user_id":"","user_name":""}}""" })
+        try {
+            client.profile(credentials)
+            fail("expected provisioning failure")
+        } catch (problem: AccountNotProvisionedException) {
+            assertTrue(problem.message.orEmpty().contains("官方红果 App"))
+        }
     }
 }
