@@ -91,6 +91,7 @@ class MainActivity : Activity() {
 
     private var promotedPreparation: PendingEpisodePreparation? = null
     private var lastPlaybackFailure = ""
+    private var lastPlaybackDetail: String? = null
     private var queuedNext: RemoteVideo? = null
     private var queuedHttp: okhttp3.OkHttpClient? = null
     private var queuedEpisode = -1
@@ -241,10 +242,20 @@ class MainActivity : Activity() {
             else if (recovery.consume()) {
                 android.util.Log.i(
                     "HongguoTV",
-                    "Automatic playback recovery ${recovery.attempts}/3 at ${retryPosition}ms",
+                    "Automatic playback recovery ${recovery.attempts}/${recovery.total} at ${retryPosition}ms",
                 )
                 playEpisode(episodeIndex, retryPosition, retryAutoplay, recovering = true)
             }
+        }
+    }
+    private var recoveryDeadline = 0L
+    private val recoveryCountdown = object : Runnable {
+        override fun run() {
+            if (!retryPending || !foreground || screen != "player") return
+            val remaining = recoveryDeadline - android.os.SystemClock.uptimeMillis()
+            if (remaining <= 0) return
+            showRecoveryStatus(remaining)
+            main.postDelayed(this, 1000)
         }
     }
     private lateinit var root: FrameLayout
@@ -557,7 +568,8 @@ class MainActivity : Activity() {
             if (homeFeedIdentity != cloudAccount.recommendationIdentity) {
                 homeFeedState.refresh(resetRecommendations = true)
                 homeFeedIdentity = cloudAccount.recommendationIdentity
-                if (homeFeed != null) showCatalog()
+                if (homeFeed != null || (screen == "catalog" && tab == 0 && library.isLoaded))
+                    showCatalog()
             }
             homeFeed?.refreshAccountLabel()
             relatedSection?.refreshLabels()
@@ -1184,6 +1196,11 @@ class MainActivity : Activity() {
         if (tab == 0) {
             favoriteMonitor.stop()
             homeFeedIdentity = cloudAccount.recommendationIdentity
+            if (cloudAccount.recommendationLoading) {
+                container.addView(text("正在恢复账号推荐…", 18f, muted))
+                if (focusNav) nav[0].requestFocus()
+                return
+            }
             val feed =
                 HomeFeedScreen(
                     this,
@@ -1195,7 +1212,7 @@ class MainActivity : Activity() {
                     PublicFeedBackend(
                         library.maxQuality,
                         account = cloudAccount.recommendationCredentials(),
-                        startupCache = FeedStartupCache(this),
+                        startupCache = cloudAccount.recommendationStartupCache(),
                     ),
                     Media3TrialPlayback(this),
                     resumes = {
@@ -4028,6 +4045,7 @@ class MainActivity : Activity() {
 
     private fun cancelRecovery() {
         main.removeCallbacks(retryRunnable)
+        main.removeCallbacks(recoveryCountdown)
         retryPending = false
         autoRecovery = false
     }
@@ -4036,20 +4054,36 @@ class MainActivity : Activity() {
         if (!foreground || !playError || !autoRecovery || retryPending) return
         if (!recovery.remaining) {
             autoRecovery = false
-            playbackText.text = "$lastPlaybackFailure\n已自动重试 3 次，仍无法播放。可手动重试或切换清晰度。"
+            playbackText.text = recoveryExhaustedText(lastPlaybackFailure) + diagnosticSuffix()
             return
         }
         if (!networkAvailable()) {
             playbackText.text =
-                "$lastPlaybackFailure\n网络已断开，联网后自动续播 · 第 ${episodeIndex+1} 集 ${formatTime(retryPosition)}"
+                "$lastPlaybackFailure\n网络已断开，联网后自动续播 · 第 ${episodeIndex+1} 集 ${formatTime(retryPosition)}" +
+                    diagnosticSuffix()
             return
         }
         val delay = recovery.delayMillis ?: return
-        playbackText.text =
-            "$lastPlaybackFailure\n${if(retryAutoplay) "准备恢复播放" else "准备恢复暂停位置"} · ${delay/1000f} 秒后重试 ${recovery.attempts+1}/3 · ${formatTime(retryPosition)}"
+        recoveryDeadline = android.os.SystemClock.uptimeMillis() + delay
+        showRecoveryStatus(delay)
         retryPending = true
         main.postDelayed(retryRunnable, delay)
+        main.removeCallbacks(recoveryCountdown)
+        main.postDelayed(recoveryCountdown, 1000)
     }
+
+    private fun showRecoveryStatus(remainingMillis: Long) {
+        playbackText.text = recoveryStatusText(
+            lastPlaybackFailure, retryAutoplay, recovery.slow, recovery.attempts + 1,
+            recovery.total, remainingMillis, formatTime(retryPosition),
+        ) + diagnosticSuffix()
+    }
+
+    private fun diagnosticSuffix() =
+        "\n" + diagnosticLine(
+            android.os.Build.MODEL, android.os.Build.VERSION.RELEASE, BuildConfig.VERSION_NAME, lastPlaybackFailure,
+            recovery.attempts, recovery.total, lastPlaybackDetail,
+        )
 
     /**
      * Detects growing audio/video drift (video frame processing offset stays signed) and re-seeks
@@ -4096,6 +4130,9 @@ class MainActivity : Activity() {
 
     private fun playerFailure(problem: Throwable) {
         lastPlaybackFailure = playbackFailureSummary(problem)
+        lastPlaybackDetail = diagnosticDetail(problem)
+        val noPlayableQuality =
+            generateSequence(problem) { it.cause }.take(8).any { it is NoPlayableQualityException }
         retryPosition = currentPosition().coerceAtLeast(0)
         retryAutoplay = requestedAutoplay && !sleepStopped
         saveProgress()
@@ -4146,14 +4183,20 @@ class MainActivity : Activity() {
             if (problem is PlaybackException)
                 problem.errorCode in 2000..2999 ||
                     problem.errorCode == PlaybackException.ERROR_CODE_TIMEOUT
-            else problem is java.io.IOException
-        playbackText.text = if (decoding) "电视无法解码当前视频，可尝试更低清晰度。" else "$lastPlaybackFailure · 可手动重试"
+            else problem is java.io.IOException && !noPlayableQuality
+        val lowerTier = if (noPlayableQuality) null else nextLowerQuality(attemptedQuality, currentTiers)
+        playbackText.text =
+            when {
+                noPlayableQuality -> lastPlaybackFailure
+                decoding && lowerTier != null -> "电视无法解码当前视频，可尝试更低清晰度。"
+                decoding -> "电视无法解码当前视频，本集没有更低清晰度可用。"
+                else -> "$lastPlaybackFailure · 可手动重试"
+            } + diagnosticSuffix()
         val actions = row()
         controls.addView(actions)
         addButton(actions, "立即重试") { playEpisode(episodeIndex, retryPosition, retryAutoplay) }
             .requestFocus()
-        nextLowerQuality(if (attemptedQuality > 0) attemptedQuality else library.maxQuality)?.let {
-            lower ->
+        lowerTier?.let { lower ->
             addButton(actions, "尝试 ${lower}P") {
                 library.maxQuality = lower
                 playEpisode(episodeIndex, retryPosition, retryAutoplay)
