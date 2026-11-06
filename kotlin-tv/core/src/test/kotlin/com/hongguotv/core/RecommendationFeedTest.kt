@@ -145,6 +145,49 @@ class RecommendationFeedTest {
     }
 
     @Test
+    fun recommendationErrorRotatesHostsAndResetsServerCursor() {
+        val requests = mutableListOf<Request>()
+        val http =
+            OkHttpClient.Builder()
+                .addInterceptor { chain ->
+                    requests += chain.request()
+                    val body =
+                        when (requests.size) {
+                            1 -> response("101")
+                            3 -> response("101")
+                            4 -> response("102")
+                            else -> """{"code":110}"""
+                        }
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(body.toResponseBody())
+                        .build()
+                }
+                .build()
+        val feed = RecommendationFeed(http)
+        assertEquals("101", feed.page(1).items.single().id)
+        assertEquals("102", feed.page(2).items.single().id)
+        val hosts =
+            listOf(
+                "api5-normal-sinfonlinea.fqnovel.com",
+                "api5-normal-hl.fqnovel.com",
+                "api5-normal-lf.fqnovel.com",
+            )
+        assertEquals(hosts, requests.drop(1).map { it.url.host })
+        assertEquals("test-page-session", requests[1].url.queryParameter("session_id"))
+        assertNull(requests[2].url.queryParameter("session_id"))
+        assertEquals("0", requests[2].url.queryParameter("offset"))
+        assertEquals("1", requests[2].url.queryParameter("client_req_type"))
+
+        val failure = assertThrows(IOException::class.java) { RecommendationFeed(http).page(1) }
+        assertEquals("推荐暂不可用（错误码 110），请稍后刷新", failure.message)
+        assertEquals(hosts, requests.drop(4).map { it.url.host })
+    }
+
+    @Test
     fun accountIdentityIsSentOnlyToOfficialFeedAndGuestCursorIsSeparate() {
         var requested: Request? = null
         val http =

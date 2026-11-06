@@ -63,7 +63,7 @@ class RecommendationFeed(
             require(page in 1..100)
             if (page == cursor.lastPage) return@synchronized checkNotNull(cursor.lastResult)
             if (page != cursor.expectedPage) throw IOException("推荐已刷新，请重新获取")
-            repeat(3) {
+            FEED_HOSTS.forEachIndexed { attempt, host ->
                 val params =
                     linkedMapOf(
                             "aid" to "8662",
@@ -114,7 +114,6 @@ class RecommendationFeed(
                             put("_rticket", System.currentTimeMillis().toString())
                             if (cursor.session.isNotEmpty()) put("session_id", cursor.session)
                         }
-                val host = "https://api5-normal-sinfonlinea.fqnovel.com"
                 val request =
                     if (category == null) {
                         val url = "$host/reading/bookapi/bookmall/tab/v1/".toHttpUrl().newBuilder()
@@ -191,6 +190,13 @@ class RecommendationFeed(
                     RequestScope.execute(accountHttp.newCall(request.build())) { response ->
                         JSONObject(feedResponse(response))
                     }
+                val code = result.optInt("code", -1)
+                if (code > 0 && (code == 110 || cursor.session.isNotEmpty())) {
+                    // Rebuild the server cursor on the next host while retaining local deduplication.
+                    cursor.session = ""
+                    cursor.offset = 0
+                    if (attempt < FEED_HOSTS.lastIndex) return@forEachIndexed
+                }
                 val parsed = if (category == null) parse(result) else parseCategory(result)
                 cursor.session = parsed.second.ifBlank { cursor.session }
                 cursor.offset =
@@ -203,7 +209,7 @@ class RecommendationFeed(
                     parsed.first.copy(items = parsed.first.items.filter { it.id !in cursor.seen })
                 cursor.seen.addAll(parsed.first.items.map { it.id })
                 while (cursor.seen.size > 540) cursor.seen.remove(cursor.seen.first())
-                if (fresh.items.isEmpty()) return@repeat
+                if (fresh.items.isEmpty()) return@forEachIndexed
                 cursor.expectedPage = page + 1
                 cursor.lastPage = page
                 cursor.lastResult = fresh
@@ -213,6 +219,13 @@ class RecommendationFeed(
         }
 
     companion object {
+        private val FEED_HOSTS =
+            listOf(
+                "https://api5-normal-sinfonlinea.fqnovel.com",
+                "https://api5-normal-hl.fqnovel.com",
+                "https://api5-normal-lf.fqnovel.com",
+            )
+
         /**
          * The signed-in mall tab is personalized and far larger than account payloads; the strict 2
          * MiB account reader must not gate this feed.
