@@ -279,9 +279,16 @@ constructor(
             "update_version_code" to "73932", "pv_player" to "73932",
             "version_name" to "7.3.9.32",
         )
-        val signed = Signer(clock = clock, device = profile)
-            .signPlayback(base, profile + extra, body)
-        return signedRequest(signed.url, signed).apply {
+        val ticket = clock()
+        val query = Signer.encode(profile + extra + ("_rticket" to ticket.toString()))
+        val url = "$base?$query"
+        val headers = mapOf(
+            "User-Agent" to VendorConstants.PLAYER_UA,
+            "Accept" to "application/json; charset=utf-8,application/x-protobuf",
+            "sdk-version" to "2",
+            "x-xs-from-web" to "0",
+        ) + PlayerSigner.headers(query, body, ts = ticket / 1000, ticket = ticket)
+        return signedRequest(url, Signer.Request(url, headers, body)).apply {
             if (identity.cookie.isNotBlank()) header("Cookie", identity.cookie)
         }
     }

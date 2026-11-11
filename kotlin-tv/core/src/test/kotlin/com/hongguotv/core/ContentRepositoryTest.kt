@@ -130,7 +130,8 @@ class ContentRepositoryTest {
         assertEquals(requests.first().url.encodedPath, alternate.url.encodedPath)
         assertEquals("333", alternate.url.queryParameter("device_id"))
         assertEquals("ttreq=fixture", alternate.header("Cookie"))
-        assertFalse(alternate.header("x-medusa").isNullOrBlank())
+        assertFalse(alternate.header("x-argus").isNullOrBlank())
+        assertNull(alternate.header("x-medusa"))
     }
 
     private val videoTabModel =
@@ -153,12 +154,11 @@ class ContentRepositoryTest {
         assertEquals("444", request.url.queryParameter("iid"))
         assertEquals(request.url.queryParameter("_rticket"), request.header("x-ss-req-ticket"))
         assertNull(request.url.queryParameter("ts"))
-            assertTrue(kotlin.math.abs(request.header("x-khronos")!!.toLong() -
-                request.url.queryParameter("_rticket")!!.toLong() / 1000) <= 1)
-        for (header in listOf("x-gorgon", "x-medusa", "x-argus", "x-ladon", "x-khronos", "x-helios"))
+        assertEquals(request.url.queryParameter("_rticket")!!.toLong() / 1000, request.header("x-khronos")!!.toLong())
+        for (header in listOf("x-argus", "x-ladon"))
             assertFalse(request.header(header).isNullOrBlank())
-        val ts = request.header("x-khronos")!!.toInt()
-        assertEquals(0, Signer().branch(request.url.encodedQuery!!, null, ts))
+        for (header in listOf("x-gorgon", "x-medusa", "x-helios"))
+            assertNull(request.header(header))
     }
 
     private fun fixtureResponse(request: Request, body: String, setCookie: Boolean = false) =
@@ -410,9 +410,10 @@ class ContentRepositoryTest {
         }
         for (request in requests) {
             assertEquals("POST", request.method)
-            for (header in listOf("x-gorgon", "x-medusa", "x-argus", "x-ladon", "x-khronos", "x-helios")) assertNotNull(
-                request.header(header)
-            )
+            for (header in listOf("x-argus", "x-ladon", "x-khronos", "x-ss-req-ticket", "x-ss-stub"))
+                assertFalse(request.header(header).isNullOrBlank())
+            for (header in listOf("x-gorgon", "x-medusa", "x-helios"))
+                assertNull(request.header(header))
             assertTrue(request.header("User-Agent").orEmpty().startsWith("com.phoenix.read/"))
             for (key in listOf("iid", "device_id")) {
                 val value = request.url.queryParameter(key)!!
@@ -575,8 +576,8 @@ class ContentRepositoryTest {
             assertTrue(kotlin.math.abs(request.header("x-khronos")!!.toLong() -
                 request.url.queryParameter("_rticket")!!.toLong() / 1000) <= 1)
         }
-        assertNotEquals(requests[0].header("x-gorgon"), requests[1].header("x-gorgon"))
-        assertNotEquals(requests[0].header("x-medusa"), requests[1].header("x-medusa"))
+        assertNotEquals(requests[0].header("x-argus"), requests[1].header("x-argus"))
+        assertNotEquals(requests[0].header("x-khronos"), requests[1].header("x-khronos"))
         // 重试强制新建连接，首拍不携带。
         assertNull(requests[0].header("Connection"))
         assertEquals("close", requests[1].header("Connection"))
