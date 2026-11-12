@@ -32,8 +32,9 @@ class PlaybackDeviceSessionTest {
                             assertNull(request.header("Cookie"))
                             assertNull(request.header("x-gorgon"))
                             """{"device_id":"333","install_id":"444"}"""
-                        } else if (request.url.encodedPath == "/reading/bookapi/video_tab/multi_video_model/v1/") {
-                            """{"code":100103}"""
+                        } else if (request.url.encodedPath.startsWith("/reading/bookapi/video_tab/")) {
+                            // 新接口统一回 100103 让调用方回退；本用例只统计旧接口模型请求。
+                            """{"code":100103,"message":"PARAM_INVALID","data":null}"""
                         } else {
                             requests += request
                             assertEquals("333", request.url.queryParameter("device_id"))
@@ -111,6 +112,58 @@ class PlaybackDeviceSessionTest {
             }
         }
         assertEquals(0, models)
+    }
+
+    @Test
+    fun rotateRegistersFreshIdentityAndKeepsItCachedWithoutReregistering() {
+        val calls = AtomicInteger()
+        val session = PlaybackDeviceSession {
+            calls.incrementAndGet()
+            DeviceRegister.Registered("333", "444", cookies = mapOf("ttreq" to "test-only"))
+        }
+        val http = OkHttpClient()
+        val first = session.profile(http)
+        assertEquals(1, calls.get())
+        assertTrue(session.rotate(http))
+        assertEquals(2, calls.get())
+        val second = session.profile(http)
+        assertEquals(2, calls.get()) // rotate 已注册并缓存，profile 不再注册
+        assertNotSame(first, second)
+        assertNotEquals(first.values["cdid"], second.values["cdid"]) // cdid 一并换新 = 全新身份
+        assertEquals("333", second.values["device_id"])
+        assertEquals("ttreq=test-only", second.cookie)
+    }
+
+    @Test
+    fun rotateFailureKeepsTheWorkingIdentity() {
+        val calls = AtomicInteger()
+        val session = PlaybackDeviceSession {
+            if (calls.incrementAndGet() == 1) {
+                DeviceRegister.Registered("333", "444", cookies = mapOf("ttreq" to "keep"))
+            } else {
+                throw IOException("test-only")
+            }
+        }
+        val http = OkHttpClient()
+        val first = session.profile(http)
+        assertFalse(session.rotate(http))
+        assertEquals(2, calls.get())
+        assertSame(first, session.profile(http)) // 注册失败保留原身份，且不再重复注册
+        assertEquals(2, calls.get())
+    }
+
+    @Test
+    fun rotateIgnoresInvalidRegistrationResults() {
+        val calls = AtomicInteger()
+        val session = PlaybackDeviceSession {
+            calls.incrementAndGet()
+            DeviceRegister.Registered("0", "444")
+        }
+        val http = OkHttpClient()
+        assertFalse(session.rotate(http))
+        // 无效结果未被缓存：profile 会重新注册并照常拒绝
+        assertThrows(PlaybackDeviceRegistrationException::class.java) { session.profile(http) }
+        assertEquals(2, calls.get())
     }
 
     @Test
