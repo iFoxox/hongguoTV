@@ -5,7 +5,7 @@ import android.content.Context
 import com.hongguotv.core.CatalogPage
 import com.hongguotv.core.FeedStartupSnapshot
 
-/** One account scope, three sources; accessed by feed workers, never the UI thread. */
+/** One account scope, three sources; feed workers read pages, selected-work snapshots commit on UI. */
 internal class FeedStartupCache(
     context: Context,
     private val clock: () -> Long = System::currentTimeMillis,
@@ -35,6 +35,36 @@ internal class FeedStartupCache(
                 }
             }
             .getOrNull()
+
+    /** 首页「接着上次刷」的游标快照；与首屏缓存共用同一份身份隔离。 */
+    fun loadCursor(identity: String, source: String): String? =
+        runCatching {
+                synchronized(lock) {
+                    owner(identity)
+                    prefs.getString("cursor:$source", null)?.takeIf { it.length <= 64_000 }
+                }
+            }
+            .getOrNull()
+
+    fun saveCursor(identity: String, source: String, snapshot: String) {
+        runCatching {
+            synchronized(lock) {
+                owner(identity)
+                // 用同步落盘：用户刷几部就强制退出时，apply 的异步写入可能还没落地就被杀掉了。
+                if (snapshot.length <= 64_000)
+                    prefs.edit().putString("cursor:$source", snapshot).commit()
+            }
+        }
+    }
+
+    /** 用户主动重建当前来源时同时移除游标和首屏，避免下一次读取又恢复旧状态。 */
+    fun clearSource(identity: String, source: String) {
+        synchronized(lock) {
+            owner(identity)
+            if (!prefs.edit().remove(source).remove("cursor:$source").commit())
+                throw java.io.IOException("推荐记录重置失败，请重试")
+        }
+    }
 
     fun save(identity: String, source: String, page: CatalogPage) {
         runCatching {

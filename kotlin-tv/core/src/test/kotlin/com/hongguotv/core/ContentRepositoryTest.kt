@@ -1,6 +1,7 @@
 package com.hongguotv.core
 
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicInteger
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
@@ -12,6 +13,239 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ContentRepositoryTest {
+    private val playbackModel =
+        """{"data":{"123":{"video_model":{"video_list":[{"main_url":"https://example.test/video","video_meta":{"definition":"720p","codec_type":"h264","vwidth":720,"vheight":1280},"encrypt_info":{"encrypt":false}}]}}}}"""
+
+    @Test
+    fun twoConsecutiveEmptyRoundsRotateIdentityOnceAndTagSubsequentFailures() {
+        val registrations = AtomicInteger()
+        val http =
+            OkHttpClient.Builder()
+                .addInterceptor { chain ->
+                    val request = chain.request()
+                    if (request.url.encodedPath == "/service/2/device_register/") {
+                        registrations.incrementAndGet()
+                        return@addInterceptor fixtureResponse(request, """{"device_id":"333","install_id":"444"}""", setCookie = true)
+                    }
+                    fixtureResponse(request, "")
+                }
+                .build()
+        val repo = ContentRepository(http, playbackSession = PlaybackDeviceSession(), sleep = {})
+        val first = assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
+        assertFalse(first.detail.orEmpty().contains("rotated"))
+        val second = assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
+        assertFalse(second.detail.orEmpty().contains("rotated"))
+        assertEquals(1, registrations.get())
+        // 第三轮开始前轮换一次身份，此后 detail 带标记且不再轮换
+        val third = assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
+        assertTrue(third.detail.orEmpty().contains("rotated=1"))
+        assertEquals(2, registrations.get())
+        val fourth = assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
+        assertTrue(fourth.detail.orEmpty().contains("rotated=1"))
+        assertEquals(2, registrations.get())
+    }
+
+    @Test
+    fun successfulPlaybackResetsIdentityRotationStateForTheNextIncident() {
+        val registrations = AtomicInteger()
+        var playinfoCalls = 0
+        val http =
+            OkHttpClient.Builder()
+                .addInterceptor { chain ->
+                    val request = chain.request()
+                    if (request.url.encodedPath == "/service/2/device_register/") {
+                        registrations.incrementAndGet()
+                        return@addInterceptor fixtureResponse(request, """{"device_id":"333","install_id":"444"}""", setCookie = true)
+                    }
+                    // 本用例覆盖旧接口的轮换时序：新接口统一回 100103 让调用方回退，且不计次。
+                    if (request.url.encodedPath.startsWith("/reading/bookapi/video_tab/"))
+                        return@addInterceptor fixtureResponse(
+                            request,
+                            """{"code":100103,"message":"PARAM_INVALID","data":null}""",
+                        )
+                    playinfoCalls++
+                    // 1-8：两轮全空；9 起成功；10-17：再现两轮全空；18 起成功
+                    fixtureResponse(
+                        request,
+                        if (playinfoCalls in 1..8 || playinfoCalls in 10..17) "" else playbackModel,
+                    )
+                }
+                .build()
+        val repo = ContentRepository(http, playbackSession = PlaybackDeviceSession(), sleep = {})
+        assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
+        assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
+        assertEquals(1, registrations.get())
+        repo.legacyStreamLadder("123") // 第三轮轮换身份后成功
+        assertEquals(2, registrations.get())
+        assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
+        assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
+        repo.legacyStreamLadder("123") // 成功复位后，新的连续失败期可再次轮换
+        assertEquals(3, registrations.get())
+    }
+
+    @Test
+    fun rotatedIdentityTriesPreferredEndpointBeforeLegacyFallback() {
+        var registrations = 0
+        val requests = mutableListOf<Request>()
+        val http = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests += request
+            val body = if (request.url.queryParameter("device_id") == "334" && request.method == "GET")
+                videoTabModel else ""
+            fixtureResponse(request, body)
+        }.build()
+        val session = PlaybackDeviceSession {
+            registrations++
+            DeviceRegister.Registered((332 + registrations).toString(), "444")
+        }
+        val repo = ContentRepository(http, playbackSession = session, sleep = {})
+        repeat(2) {
+            assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
+        }
+        val attemptsBeforeRotation = requests.size
+        assertEquals(720, repo.legacyStreamLadder("123").renditions.single().quality)
+        val recovered = requests.drop(attemptsBeforeRotation).single()
+        assertEquals("GET", recovered.method)
+        assertEquals("334", recovered.url.queryParameter("device_id"))
+    }
+
+    @Test
+    fun emptyLegacyResponsesRecoverThroughSignedAlternateVideoTab() {
+        val requests = mutableListOf<Request>()
+        val http = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests += request
+            val body = if (request.method == "GET" &&
+                request.url.host == "api5-normal-lf.fqnovel.com") videoTabModel else ""
+            fixtureResponse(request, body)
+        }.build()
+        val session = PlaybackDeviceSession {
+            DeviceRegister.Registered("333", "444", cookies = mapOf("ttreq" to "fixture"))
+        }
+        val repo = ContentRepository(http, playbackSession = session, sleep = {})
+        assertEquals(720, repo.legacyStreamLadder("123").renditions.single().quality)
+        val alternate = requests.last()
+        assertEquals("GET", alternate.method)
+        assertEquals("api5-normal-lf.fqnovel.com", alternate.url.host)
+        assertEquals(requests.first().url.encodedPath, alternate.url.encodedPath)
+        assertEquals("333", alternate.url.queryParameter("device_id"))
+        assertEquals("ttreq=fixture", alternate.header("Cookie"))
+        assertFalse(alternate.header("x-argus").isNullOrBlank())
+        assertNull(alternate.header("x-medusa"))
+    }
+
+    private val videoTabModel =
+        """{"code":0,"message":"SUCCESS","data":{"video_model_data":{"123":{"video_model":{"video_list":[{"main_url":"https://example.test/video","video_meta":{"definition":"720p","codec_type":"h264","vwidth":720,"vheight":1280},"encrypt_info":{"encrypt":false}}]}}}}}"""
+
+    @Test
+    fun preferredVideoModelSignsAllParametersBeforeSending() {
+        val requests = mutableListOf<Request>()
+        val http = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests += request
+            fixtureResponse(request, videoTabModel)
+        }.build()
+        val session = PlaybackDeviceSession { DeviceRegister.Registered("333", "444") }
+        ContentRepository(http, playbackSession = session).legacyStreamLadder("123")
+        val request = requests.single()
+        assertEquals("GET", request.method)
+        assertEquals("123", request.url.queryParameter("video_id"))
+        assertEquals("333", request.url.queryParameter("device_id"))
+        assertEquals("444", request.url.queryParameter("iid"))
+        assertEquals(request.url.queryParameter("_rticket"), request.header("x-ss-req-ticket"))
+        assertNull(request.url.queryParameter("ts"))
+        assertEquals(request.url.queryParameter("_rticket")!!.toLong() / 1000, request.header("x-khronos")!!.toLong())
+        for (header in listOf("x-argus", "x-ladon"))
+            assertFalse(request.header(header).isNullOrBlank())
+        for (header in listOf("x-gorgon", "x-medusa", "x-helios"))
+            assertNull(request.header(header))
+    }
+
+    private fun fixtureResponse(request: Request, body: String, setCookie: Boolean = false) =
+        Response.Builder()
+            .request(request)
+            .protocol(Protocol.HTTP_1_1)
+            .code(200)
+            .message("fixture")
+            .apply { if (setCookie) addHeader("Set-Cookie", "ttreq=test-only; Path=/") }
+            .body(body.toResponseBody())
+            .build()
+
+    /** 2026-11-02 起官方 App 走 video_tab GET 接口；命中后不应再打旧 /novel/player 接口。 */
+    @Test
+    fun videoTabModelIsPreferredAndSkipsLegacyEndpoint() {
+        val tabCalls = AtomicInteger()
+        val legacyCalls = AtomicInteger()
+        val http =
+            OkHttpClient.Builder()
+                .addInterceptor { chain ->
+                    val request = chain.request()
+                    when (request.url.encodedPath) {
+                        "/service/2/device_register/" ->
+                            fixtureResponse(
+                                request,
+                                """{"device_id":"333","install_id":"444"}""",
+                                setCookie = true,
+                            )
+                        "/reading/bookapi/video_tab/multi_video_model/v1/" -> {
+                            tabCalls.incrementAndGet()
+                            // 官方 GetVideoModelRequest 的 snake_case 参数缺一即 100103。
+                            assertEquals("123", request.url.queryParameter("video_id"))
+                            assertEquals("0", request.url.queryParameter("video_id_type"))
+                            assertEquals("1", request.url.queryParameter("device_level"))
+                            assertEquals("1", request.url.queryParameter("need_all_video_definition"))
+                            assertEquals("1024", request.url.queryParameter("video_platform"))
+                            fixtureResponse(request, videoTabModel)
+                        }
+                        "/novel/player/multi_video_model/v1/" -> {
+                            legacyCalls.incrementAndGet()
+                            fixtureResponse(request, playbackModel)
+                        }
+                        else -> fixtureResponse(request, "")
+                    }
+                }
+                .build()
+        val repo = ContentRepository(http, playbackSession = PlaybackDeviceSession())
+        val ladder = repo.legacyStreamLadder("123")
+        assertEquals(1, ladder.renditions.size)
+        assertEquals(1, tabCalls.get())
+        assertEquals(0, legacyCalls.get())
+    }
+
+    /** 新接口参数不合法或降级时回退旧接口，不改变既有空响应恢复路径。 */
+    @Test
+    fun videoTabParamInvalidFallsBackToLegacyEndpoint() {
+        val legacyCalls = AtomicInteger()
+        val http =
+            OkHttpClient.Builder()
+                .addInterceptor { chain ->
+                    val request = chain.request()
+                    when (request.url.encodedPath) {
+                        "/service/2/device_register/" ->
+                            fixtureResponse(
+                                request,
+                                """{"device_id":"333","install_id":"444"}""",
+                                setCookie = true,
+                            )
+                        "/reading/bookapi/video_tab/multi_video_model/v1/" ->
+                            fixtureResponse(
+                                request,
+                                """{"code":100103,"message":"PARAM_INVALID","data":null}""",
+                            )
+                        "/novel/player/multi_video_model/v1/" -> {
+                            legacyCalls.incrementAndGet()
+                            fixtureResponse(request, playbackModel)
+                        }
+                        else -> fixtureResponse(request, "")
+                    }
+                }
+                .build()
+        val repo = ContentRepository(http, playbackSession = PlaybackDeviceSession())
+        val ladder = repo.legacyStreamLadder("123")
+        assertEquals(1, ladder.renditions.size)
+        assertEquals(1, legacyCalls.get())
+    }
+
     @Test
     fun inlinePlaybackModelUsesItsOwnMetadataAndKeyWithoutFallbackRequest() {
         val requests = mutableListOf<Request>()
@@ -48,7 +282,7 @@ class ContentRepositoryTest {
                 )
                 .toString()
         }
-        val tier = repo.streamLadder("123").renditions.single()
+        val tier = repo.legacyStreamLadder("123").renditions.single()
         assertEquals(1, requests.size)
         assertEquals("https://example.com/inline", tier.url)
         assertEquals(720, tier.quality)
@@ -107,7 +341,7 @@ class ContentRepositoryTest {
             }
             assertEquals(
                 "https://example.com/valid",
-                repo.streamLadder("123").renditions.single().url,
+                repo.legacyStreamLadder("123").renditions.single().url,
             )
             assertEquals(2, calls)
         }
@@ -164,22 +398,23 @@ class ContentRepositoryTest {
     }
 
     @Test
-    fun playbackUsesUnsignedRegisteredIdentifiersAndKeepsThemAcrossEpisodes() {
+    fun playbackSignsRegisteredIdentifiersAndKeepsThemAcrossEpisodes() {
         val requests = mutableListOf<Request>()
         val repo = repository { request ->
             requests += request
             """{"Code":110001}"""
         }
         repeat(2) {
-            val error = assertThrows(IOException::class.java) { repo.stream("123") }
+            val error = assertThrows(IOException::class.java) { repo.legacyStream("123") }
             assertTrue(error.message.orEmpty().contains("110001"))
         }
         for (request in requests) {
             assertEquals("POST", request.method)
-            for (header in listOf("x-gorgon", "x-medusa", "x-argus", "x-ladon")) assertNull(
-                request.header(header)
-            )
-            assertTrue(request.header("User-Agent").orEmpty().contains("tt-ok/"))
+            for (header in listOf("x-argus", "x-ladon", "x-khronos", "x-ss-req-ticket", "x-ss-stub"))
+                assertFalse(request.header(header).isNullOrBlank())
+            for (header in listOf("x-gorgon", "x-medusa", "x-helios"))
+                assertNull(request.header(header))
+            assertTrue(request.header("User-Agent").orEmpty().startsWith("com.phoenix.read/"))
             for (key in listOf("iid", "device_id")) {
                 val value = request.url.queryParameter(key)!!
                 assertEquals(if (key == "iid") "444" else "333", value)
@@ -209,10 +444,11 @@ class ContentRepositoryTest {
             calls++
             "   "
         }
-        val error = assertThrows(IOException::class.java) { repo.stream("123") }
+        val error = assertThrows(IOException::class.java) { repo.legacyStream("123") }
         assertTrue(error.message.orEmpty().contains("空响应"))
         assertFalse(error.message.orEmpty().contains("更新应用"))
-        assertEquals(3, calls)
+        // 首次尝试 + 三次换路重试（b→hl→lf→b）。
+        assertEquals(4, calls)
     }
 
     private fun inlinePlaybackFixture(): String =
@@ -248,20 +484,20 @@ class ContentRepositoryTest {
         }
         assertEquals(
             "https://example.com/video/123",
-            repo.streamLadder("123", listOf("456", "789")).renditions.single().url,
+            repo.legacyStreamLadder("123", listOf("456", "789")).renditions.single().url,
         )
         assertEquals(
             "https://example.com/video/456",
-            repo.streamLadder("456").renditions.single().url,
+            repo.legacyStreamLadder("456").renditions.single().url,
         )
         assertEquals(
             "https://example.com/video/789",
-            repo.streamLadder("789").renditions.single().url,
+            repo.legacyStreamLadder("789").renditions.single().url,
         )
         assertEquals(1, requests.size)
         assertEquals(listOf("123", "456", "789"), playbackRequestIds(requests.single()))
         // 领取后即移除；重试同一集时必须重新获取，避免反复复用失效地址。
-        repo.streamLadder("456")
+        repo.legacyStreamLadder("456")
         assertEquals(2, requests.size)
     }
 
@@ -274,9 +510,9 @@ class ContentRepositoryTest {
                 calls++
                 batchPlaybackFixture(playbackRequestIds(request))
             }
-        repo.streamLadder("123", listOf("456"))
+        repo.legacyStreamLadder("123", listOf("456"))
         now += 60_001
-        repo.streamLadder("456")
+        repo.legacyStreamLadder("456")
         assertEquals(2, calls)
     }
 
@@ -287,14 +523,14 @@ class ContentRepositoryTest {
             calls++
             batchPlaybackFixture(listOf(playbackRequestIds(request).first()))
         }
-        repo.streamLadder("123", listOf("456"))
+        repo.legacyStreamLadder("123", listOf("456"))
         assertEquals(
             "https://example.com/video/456",
-            repo.streamLadder("456").renditions.single().url,
+            repo.legacyStreamLadder("456").renditions.single().url,
         )
         assertEquals(2, calls)
         val missingCurrent = repository { batchPlaybackFixture(listOf("456")) }
-        assertThrows(IOException::class.java) { missingCurrent.streamLadder("123", listOf("456")) }
+        assertThrows(IOException::class.java) { missingCurrent.legacyStreamLadder("123", listOf("456")) }
     }
 
     @Test
@@ -303,16 +539,16 @@ class ContentRepositoryTest {
         val repo = repository { request ->
             if (++calls < 3) "" else batchPlaybackFixture(playbackRequestIds(request))
         }
-        repo.streamLadder("123", listOf("456"))
+        repo.legacyStreamLadder("123", listOf("456"))
         assertEquals(
             "https://example.com/video/456",
-            repo.streamLadder("456").renditions.single().url,
+            repo.legacyStreamLadder("456").renditions.single().url,
         )
         assertEquals(3, calls)
     }
 
     @Test
-    fun playbackModelRecoversFromOneEmptyResponseWithoutChangingRequestIdentity() {
+    fun playbackModelRecoversFromOneEmptyResponseOnADifferentHostWithoutChangingIdentity() {
         val requests = mutableListOf<Request>()
         var now = 1000L
         val repo =
@@ -321,16 +557,30 @@ class ContentRepositoryTest {
                 now += 1000
                 if (requests.size == 1) " \n " else inlinePlaybackFixture()
             }
-        assertEquals("https://example.com/video", repo.streamLadder("123").renditions.single().url)
+        assertEquals("https://example.com/video", repo.legacyStreamLadder("123").renditions.single().url)
         assertEquals(2, requests.size)
+        // 换路重试：host 轮换到备选，设备身份查询参数保持一致；
+        // ts/_rticket 参与签名，随整请求重签一并刷新。
+        assertNotEquals(requests[0].url.host, requests[1].url.host)
         assertEquals(
-            requests[0].url.newBuilder().removeAllQueryParameters("_rticket").build(),
-            requests[1].url.newBuilder().removeAllQueryParameters("_rticket").build(),
+            requests[0].url.newBuilder().host(requests[1].url.host).removeAllQueryParameters("_rticket").removeAllQueryParameters("ts").build(),
+            requests[1].url.newBuilder().removeAllQueryParameters("_rticket").removeAllQueryParameters("ts").build(),
         )
         assertNotEquals(
             requests[0].url.queryParameter("_rticket"),
             requests[1].url.queryParameter("_rticket"),
         )
+        for (request in requests) {
+            assertEquals(request.url.queryParameter("_rticket"), request.header("x-ss-req-ticket"))
+            assertNull(request.url.queryParameter("ts"))
+            assertTrue(kotlin.math.abs(request.header("x-khronos")!!.toLong() -
+                request.url.queryParameter("_rticket")!!.toLong() / 1000) <= 1)
+        }
+        assertNotEquals(requests[0].header("x-argus"), requests[1].header("x-argus"))
+        assertNotEquals(requests[0].header("x-khronos"), requests[1].header("x-khronos"))
+        // 重试强制新建连接，首拍不携带。
+        assertNull(requests[0].header("Connection"))
+        assertEquals("close", requests[1].header("Connection"))
         val first = okio.Buffer().also { requests[0].body!!.writeTo(it) }.readUtf8()
         val second = okio.Buffer().also { requests[1].body!!.writeTo(it) }.readUtf8()
         assertEquals(first, second)
@@ -344,7 +594,7 @@ class ContentRepositoryTest {
             if (++calls == 1) throw java.net.SocketTimeoutException("fixture")
             inlinePlaybackFixture()
         }
-        assertEquals(720, repo.streamLadder("123").renditions.single().quality)
+        assertEquals(720, repo.legacyStreamLadder("123").renditions.single().quality)
         assertEquals(2, calls)
     }
 
@@ -356,7 +606,7 @@ class ContentRepositoryTest {
                 calls++
                 body
             }
-            assertThrows(Exception::class.java) { repo.streamLadder("123") }
+            assertThrows(Exception::class.java) { repo.legacyStreamLadder("123") }
             assertEquals(1, calls)
         }
     }
@@ -370,38 +620,8 @@ class ContentRepositoryTest {
             scope.cancel()
             ""
         }
-        assertThrows(IOException::class.java) { scope.run { repo.streamLadder("123") } }
+        assertThrows(IOException::class.java) { scope.run { repo.legacyStreamLadder("123") } }
         assertEquals(1, calls)
-    }
-
-    @Test
-    fun emptyModelRegistersAnAnonymousDeviceOnceAndReusesItForLaterEpisodes() {
-        val requests = mutableListOf<Request>()
-        var registrations = 0
-        val session = PlaybackDeviceSession { registrations++; DeviceRegister.Registered("7654321", "1234567") }
-        val repo = repository(session = session) { request ->
-            requests += request
-            if(requests.size == 1) "" else inlinePlaybackFixture()
-        }
-        assertEquals("720P", repo.stream("123").quality)
-        assertEquals("720P", repo.stream("456").quality)
-        assertEquals(1, registrations)
-        val playerRequests = requests.filter { it.url.encodedPath.contains("multi_video_model") }
-        assertEquals(3, playerRequests.size)
-        playerRequests.forEach {
-            assertEquals("7654321", it.url.queryParameter("device_id"))
-            assertEquals("1234567", it.url.queryParameter("iid"))
-        }
-    }
-
-    @Test
-    fun cancelledPlaybackDoesNotRetryAfterDeviceRegistration() {
-        val scope = RequestScope()
-        var playerCalls = 0
-        val session = PlaybackDeviceSession { scope.cancel(); DeviceRegister.Registered("7654321", "1234567") }
-        val repo = repository(session = session) { playerCalls++; "" }
-        assertThrows(IOException::class.java) { scope.run { repo.stream("123") } }
-        assertEquals(0, playerCalls)
     }
 
     private fun streamRepository(vararg variants: Triple<Int, String, String>) =
@@ -434,7 +654,7 @@ class ContentRepositoryTest {
                 Triple(720, "bytevc2", "https://example.com/unsupported"),
                 Triple(1080, "bytevc1", "https://example.com/hevc"),
             )
-        val result = repo.stream("123", 720)
+        val result = repo.legacyStream("123", 720)
         assertEquals("https://example.com/hevc", result.url)
         assertEquals("1080P（兼容资源）", result.quality)
     }
@@ -447,7 +667,45 @@ class ContentRepositoryTest {
                 Triple(480, "h264", "https://example.com/avc"),
                 Triple(1080, "bytevc1", "https://example.com/hevc"),
             )
-        assertEquals("480P", repo.stream("123", 720).quality)
+        assertEquals("480P", repo.legacyStream("123", 720).quality)
+    }
+
+    @Test
+    fun byteVc2OnlyFallbackRequestsOneCompatibleModelAndPreservesOtherParameters() {
+        val fallbackRequests = mutableListOf<Request>()
+        val repo = repository { request ->
+            if (request.url.host != "example.com")
+                """{"data":{"123":{"video_model":{"fallback_api":"https://example.com/stream?codec_type=4&token=fixture"}}}}"""
+            else {
+                fallbackRequests += request
+                val compatible = request.url.queryParameter("codec_type") == "0" &&
+                    request.url.queryParameter("force_codec") == "h264"
+                val codec = if (compatible) "h265" else "bytevc2"
+                """{"video_info":{"data":{"video_list":{"video_1":{"vwidth":1254,"vheight":720,"codec_type":"$codec","main_url":"https://example.com/video"}}}}}"""
+            }
+        }
+        val tier = repo.legacyStreamLadder("123").renditions.single()
+        assertEquals("h265", tier.codec)
+        assertEquals(2, fallbackRequests.size)
+        assertEquals("fixture", fallbackRequests.last().url.queryParameter("token"))
+    }
+
+    @Test
+    fun compatibleModelRequestIsBoundedAndDoesNotRetryUnknownOrPlayableCodecs() {
+        for ((codec, expectedCalls) in listOf("bytevc2" to 2, "bvc2" to 2, "unknown" to 1, "h265" to 1)) {
+            var calls = 0
+            val repo = repository { request ->
+                if (request.url.host != "example.com")
+                    """{"data":{"123":{"video_model":{"fallback_api":"https://example.com/stream"}}}}"""
+                else {
+                    calls++
+                    """{"video_info":{"data":{"video_list":{"video_1":{"vheight":720,"codec_type":"$codec","main_url":"https://example.com/video"}}}}}"""
+                }
+            }
+            if (expectedCalls == 2) assertThrows(IOException::class.java) { repo.legacyStreamLadder("123") }
+            else assertEquals(codec, repo.legacyStreamLadder("123").renditions.single().codec)
+            assertEquals(expectedCalls, calls)
+        }
     }
 
     @Test
@@ -457,7 +715,7 @@ class ContentRepositoryTest {
                 Triple(720, "ByteVC2", "https://example.com/unsupported"),
                 Triple(480, "bvc2", "https://example.com/unsupported2"),
             )
-        assertThrows(IOException::class.java) { repo.stream("123", 720) }
+        assertThrows(IOException::class.java) { repo.legacyStream("123", 720) }
     }
 
     @Test
@@ -467,7 +725,7 @@ class ContentRepositoryTest {
                 Triple(720, "", "https://example.com/legacy"),
                 Triple(1080, "bytevc1", "https://example.com/hevc"),
             )
-        assertEquals("720P", repo.stream("123", 720).quality)
+        assertEquals("720P", repo.legacyStream("123", 720).quality)
     }
 
     @Test
@@ -477,7 +735,7 @@ class ContentRepositoryTest {
                 Triple(1080, "bytevc1", "https://example.com/hevc"),
                 Triple(480, "h264", "https://example.com/avc"),
             )
-        val info = repo.stream("123", 1080) { it.codec == "h264" }
+        val info = repo.legacyStream("123", 1080) { it.codec == "h264" }
         assertEquals("480P", info.quality)
         assertEquals("https://example.com/avc", info.url)
     }
@@ -515,7 +773,7 @@ class ContentRepositoryTest {
             } else
                 """{"data":{"123":{"video_model":{"fallback_api":"https://example.com/stream"}}}}"""
         }
-        val ladder = repo.streamLadder("123")
+        val ladder = repo.legacyStreamLadder("123")
         val portrait = ladder.renditions.first { it.url.endsWith("/portrait") }
         assertEquals("h264", portrait.codec)
         assertEquals(1080, portrait.width)
@@ -529,24 +787,29 @@ class ContentRepositoryTest {
 
     private fun repository(
         clock: () -> Long = System::currentTimeMillis,
-        session: PlaybackDeviceSession = PlaybackDeviceSession { DeviceRegister.Registered("333", "444") },
         respond: (Request) -> String,
     ) =
         ContentRepository(
             OkHttpClient.Builder()
                 .addInterceptor { chain ->
+                    val request = chain.request()
+                    // 本轮起播放先读 video_tab 新接口；只用例覆盖旧接口行为，统一让它回 100103
+                    // 让调用方回退，且不进入用例自己的请求计数。
+                    val body =
+                        if (request.url.encodedPath.startsWith("/reading/bookapi/video_tab/"))
+                            """{"code":100103,"message":"PARAM_INVALID","data":null}"""
+                        else respond(request)
                     Response.Builder()
-                        .request(chain.request())
+                        .request(request)
                         .protocol(Protocol.HTTP_1_1)
                         .code(200)
                         .message("OK")
-                        .body((if (chain.request().url.encodedPath == "/reading/bookapi/video_tab/multi_video_model/v1/")
-                            """{"code":100103}""" else respond(chain.request())).toResponseBody())
+                        .body(body.toResponseBody())
                         .build()
                 }
                 .build(),
             clock,
-            session,
+            PlaybackDeviceSession { DeviceRegister.Registered("333", "444") },
         )
 
     private fun rankPayload(page: Int = 1, totalPages: Int = 2) =

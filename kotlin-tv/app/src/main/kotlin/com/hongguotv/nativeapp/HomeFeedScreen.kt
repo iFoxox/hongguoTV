@@ -13,6 +13,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.widget.*
+import androidx.media3.common.PlaybackException
 import com.hongguotv.core.*
 import java.io.Closeable
 import java.util.concurrent.Executors
@@ -59,6 +60,10 @@ internal class HomeFeedScreen(
     private var active = false
     private var loading = false
     private var failed = false
+    private val exhaustedCursors = mutableSetOf<RecommendationCursor>()
+    private var trialError: PlaybackException? = null
+    private var healSeriesId: String? = null
+    private var healAttempts = 0
     private val stage = FrameLayout(activity)
     private val title = label("发现下一部好剧", 25f)
     private val meta = label("第一集试播", 13f, TvStyle.accent)
@@ -277,10 +282,11 @@ internal class HomeFeedScreen(
             button("换一批") {
                 clearCurrent()
                 clearCache()
-                state.refresh()
+                val restart = exhaustedCursors.remove(state.recommendationCursor)
+                state.refresh(restartCurrentSource = restart)
                 browsed = null
                 describe()
-                loadPage(false)
+                loadPage(false, resetSource = restart)
             }
         val typeChoices = listOf(recommendButton, comicButton, realButton, refresh)
         categoryButtons.addAll(typeChoices)
@@ -452,17 +458,18 @@ internal class HomeFeedScreen(
                 else -> false
             }
         }
+        playback.onError = { trialError = it }
         playback.status = { value ->
             if (!closed && clip != null)
                 when (value) {
                     TrialStatus.BUFFERING -> {
                         status.visibility = View.VISIBLE
-                        status.text = "正在加载第一集…"
+                        status.text = "正在加载第 ${clip?.trialEpisodeIndex ?: 1} 集…"
                     }
                     TrialStatus.READY -> {
                         status.visibility = if (state.userPaused) View.VISIBLE else View.GONE
                         failed = false
-                        status.text = if (state.userPaused) "试播已暂停" else "第一集试播 · 喜欢就看全集"
+                        status.text = if (state.userPaused) "试播已暂停" else "第 ${clip?.trialEpisodeIndex ?: 1} 集试播 · 喜欢就看全集"
                         paintActions()
                         prefetchUpcoming()
                     }
@@ -476,11 +483,25 @@ internal class HomeFeedScreen(
                         if (active && stage.hasFocus()) showActions()
                     }
                     TrialStatus.ERROR -> {
-                        status.visibility = View.VISIBLE
-                        playback.pause()
-                        failed = true
-                        status.text = "试播暂不可用 · 可重试、换剧或查看全集"
-                        paintActions()
+                        val track = clip?.track
+                        if (track != null && shouldSelfHealTrial(trialError?.errorCode, true, healAttempts) &&
+                            CodecCapabilities.learnFailure(track.fourcc, track.width, track.height)
+                        ) {
+                            healAttempts++
+                            val failedClip = clip
+                            main.post {
+                                if (active && !closed && clip === failedClip) {
+                                    clearCache()
+                                    loadCurrent()
+                                }
+                            }
+                        } else {
+                            status.visibility = View.VISIBLE
+                            playback.pause()
+                            failed = true
+                            status.text = "试播暂不可用 · 可重试、换剧或查看全集"
+                            paintActions()
+                        }
                     }
                 }
         }
@@ -789,7 +810,7 @@ internal class HomeFeedScreen(
         title.text = series.title
         val playing = clip?.detail?.series?.id == series.id
         meta.text =
-            if (playing) "第一集试播 · 共 ${clip!!.episodeCount} 集 · ${series.tags}"
+            if (playing) "第 ${clip!!.trialEpisodeIndex} 集试播 · 共 ${clip!!.episodeCount} 集 · ${series.tags}"
             else listOf(series.badge, series.tags).filter { it.isNotBlank() }.joinToString(" · ")
         intro.text = series.description.ifBlank { "确定试播第一集，或选择观看全集。" }
         if (!playing) {
@@ -877,6 +898,7 @@ internal class HomeFeedScreen(
         cancelRequest()
         loading = true
         val token = generation
+        val requestedCursor = state.recommendationCursor
         val requestScope = RequestScope()
         scope = requestScope
         job =
@@ -898,7 +920,10 @@ internal class HomeFeedScreen(
                         status.visibility = View.VISIBLE
                         val message =
                             error.message.orEmpty().replace(Regex("https?://\\S+"), "[地址]").take(90)
-                        status.text = "暂时无法加载 · ${message.ifBlank { "请重试或换一部" }}"
+                        if (error is NoNewRecommendationsException) {
+                            exhaustedCursors += requestedCursor
+                            status.text = "暂时没有新的推荐 · 按“换一批”重新获取"
+                        } else status.text = "暂时无法加载 · ${message.ifBlank { "请重试或换一部" }}"
                         paintActions()
                     }
                 }
@@ -906,7 +931,7 @@ internal class HomeFeedScreen(
     }
 
     // 按当前推荐模式请求下一页；结果写入状态后，再加载当前作品的试播资源。
-    private fun loadPage(advance: Boolean, keepTrial: Boolean = false) {
+    private fun loadPage(advance: Boolean, keepTrial: Boolean = false, resetSource: Boolean = false) {
         if (!active || closed || loading) return
         if (state.page >= 100 || (!state.hasMore && state.current != null)) {
             status.visibility = View.VISIBLE
@@ -920,6 +945,7 @@ internal class HomeFeedScreen(
         val recommendation = state.recommendation
         val cursor = state.recommendationCursor
         request({
+            if (resetSource) backend.resetRecommendations(if (recommendation) null else category)
             if (recommendation) backend.recommendations(page, cursor)
             else backend.categoryRecommendations(category, page, cursor)
         }) { result ->
@@ -940,6 +966,11 @@ internal class HomeFeedScreen(
     private fun loadCurrent() {
         val series = state.current ?: return
         if (!active || closed) return
+        trialError = null
+        if (healSeriesId != series.id) {
+            healSeriesId = series.id
+            healAttempts = 0
+        }
         clearCurrent(keepPrefetch = prefetchTarget == series.id)
         failed = false
         describe()
@@ -959,8 +990,9 @@ internal class HomeFeedScreen(
     private fun attach(next: TrialClip) {
         clip = next
         val series = next.detail.series
+        backend.noteDisplayed(series, state.recommendationCursor, state.category.takeUnless { state.recommendation })
         meta.text =
-            "第一集试播 · 共 ${next.episodeCount} 集" +
+            "第 ${next.trialEpisodeIndex} 集试播 · 共 ${next.episodeCount} 集" +
                 (series.tags.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "")
         if (series.description.isNotBlank()) intro.text = series.description
         if (!TvStyle.touch) {
@@ -1145,7 +1177,7 @@ internal class HomeFeedScreen(
             } else if (active) playback.resume()
         }
         status.visibility = if (state.userPaused) View.VISIBLE else View.GONE
-        status.text = if (state.userPaused) "试播已暂停" else "第一集试播 · 喜欢就看全集"
+        status.text = if (state.userPaused) "试播已暂停" else "第 ${clip?.trialEpisodeIndex ?: 1} 集试播 · 喜欢就看全集"
         paintActions()
     }
 
