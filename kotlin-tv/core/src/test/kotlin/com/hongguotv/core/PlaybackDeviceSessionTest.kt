@@ -55,8 +55,8 @@ class PlaybackDeviceSessionTest {
                 }
                 .build()
         val session = PlaybackDeviceSession()
-        ContentRepository(http, playbackSession = session).streamLadder("123")
-        ContentRepository(http, playbackSession = session).streamLadder("123")
+        ContentRepository(http, playbackSession = session).legacyStreamLadder("123")
+        ContentRepository(http, playbackSession = session).legacyStreamLadder("123")
         assertEquals(1, registrations)
         assertEquals(3, models)
         assertEquals(1, requests.map { it.url.queryParameter("cdid") }.distinct().size)
@@ -108,7 +108,7 @@ class PlaybackDeviceSessionTest {
             val repo =
                 ContentRepository(http, playbackSession = PlaybackDeviceSession { registered })
             assertThrows(PlaybackDeviceRegistrationException::class.java) {
-                repo.streamLadder("123")
+                repo.legacyStreamLadder("123")
             }
         }
         assertEquals(0, models)

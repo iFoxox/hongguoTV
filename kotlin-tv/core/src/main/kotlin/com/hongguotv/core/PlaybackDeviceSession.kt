@@ -37,6 +37,21 @@ class PlaybackDeviceSession(
 
     private var cdid = UUID.randomUUID().toString()
     private var ready: Profile? = null
+    private var lastRecoveryNanos: Long? = null
+
+    @Synchronized
+    internal fun currentProfile(): Profile? = ready
+
+    /** 同一进程最多每 30 秒重新注册一次。并发请求复用已经替换的身份。 */
+    @Synchronized
+    internal fun rotateAfterEmpty(http: OkHttpClient, failed: Profile): Boolean {
+        if (ready !== failed) return ready != null
+        val now = System.nanoTime()
+        if (lastRecoveryNanos?.let { now - it < java.util.concurrent.TimeUnit.SECONDS.toNanos(30) } == true)
+            return false
+        lastRecoveryNanos = now
+        return rotate(http)
+    }
 
     @Synchronized
     internal fun profile(http: OkHttpClient): Profile {

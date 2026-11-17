@@ -31,16 +31,16 @@ class ContentRepositoryTest {
                 }
                 .build()
         val repo = ContentRepository(http, playbackSession = PlaybackDeviceSession(), sleep = {})
-        val first = assertThrows(EmptyPlaybackResponseException::class.java) { repo.streamLadder("123") }
+        val first = assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
         assertFalse(first.detail.orEmpty().contains("rotated"))
-        val second = assertThrows(EmptyPlaybackResponseException::class.java) { repo.streamLadder("123") }
+        val second = assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
         assertFalse(second.detail.orEmpty().contains("rotated"))
         assertEquals(1, registrations.get())
         // 第三轮开始前轮换一次身份，此后 detail 带标记且不再轮换
-        val third = assertThrows(EmptyPlaybackResponseException::class.java) { repo.streamLadder("123") }
+        val third = assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
         assertTrue(third.detail.orEmpty().contains("rotated=1"))
         assertEquals(2, registrations.get())
-        val fourth = assertThrows(EmptyPlaybackResponseException::class.java) { repo.streamLadder("123") }
+        val fourth = assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
         assertTrue(fourth.detail.orEmpty().contains("rotated=1"))
         assertEquals(2, registrations.get())
     }
@@ -72,14 +72,14 @@ class ContentRepositoryTest {
                 }
                 .build()
         val repo = ContentRepository(http, playbackSession = PlaybackDeviceSession(), sleep = {})
-        assertThrows(EmptyPlaybackResponseException::class.java) { repo.streamLadder("123") }
-        assertThrows(EmptyPlaybackResponseException::class.java) { repo.streamLadder("123") }
+        assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
+        assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
         assertEquals(1, registrations.get())
-        repo.streamLadder("123") // 第三轮轮换身份后成功
+        repo.legacyStreamLadder("123") // 第三轮轮换身份后成功
         assertEquals(2, registrations.get())
-        assertThrows(EmptyPlaybackResponseException::class.java) { repo.streamLadder("123") }
-        assertThrows(EmptyPlaybackResponseException::class.java) { repo.streamLadder("123") }
-        repo.streamLadder("123") // 成功复位后，新的连续失败期可再次轮换
+        assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
+        assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
+        repo.legacyStreamLadder("123") // 成功复位后，新的连续失败期可再次轮换
         assertEquals(3, registrations.get())
     }
 
@@ -100,10 +100,10 @@ class ContentRepositoryTest {
         }
         val repo = ContentRepository(http, playbackSession = session, sleep = {})
         repeat(2) {
-            assertThrows(EmptyPlaybackResponseException::class.java) { repo.streamLadder("123") }
+            assertThrows(EmptyPlaybackResponseException::class.java) { repo.legacyStreamLadder("123") }
         }
         val attemptsBeforeRotation = requests.size
-        assertEquals(720, repo.streamLadder("123").renditions.single().quality)
+        assertEquals(720, repo.legacyStreamLadder("123").renditions.single().quality)
         val recovered = requests.drop(attemptsBeforeRotation).single()
         assertEquals("GET", recovered.method)
         assertEquals("334", recovered.url.queryParameter("device_id"))
@@ -123,7 +123,7 @@ class ContentRepositoryTest {
             DeviceRegister.Registered("333", "444", cookies = mapOf("ttreq" to "fixture"))
         }
         val repo = ContentRepository(http, playbackSession = session, sleep = {})
-        assertEquals(720, repo.streamLadder("123").renditions.single().quality)
+        assertEquals(720, repo.legacyStreamLadder("123").renditions.single().quality)
         val alternate = requests.last()
         assertEquals("GET", alternate.method)
         assertEquals("api5-normal-lf.fqnovel.com", alternate.url.host)
@@ -146,7 +146,7 @@ class ContentRepositoryTest {
             fixtureResponse(request, videoTabModel)
         }.build()
         val session = PlaybackDeviceSession { DeviceRegister.Registered("333", "444") }
-        ContentRepository(http, playbackSession = session).streamLadder("123")
+        ContentRepository(http, playbackSession = session).legacyStreamLadder("123")
         val request = requests.single()
         assertEquals("GET", request.method)
         assertEquals("123", request.url.queryParameter("video_id"))
@@ -206,7 +206,7 @@ class ContentRepositoryTest {
                 }
                 .build()
         val repo = ContentRepository(http, playbackSession = PlaybackDeviceSession())
-        val ladder = repo.streamLadder("123")
+        val ladder = repo.legacyStreamLadder("123")
         assertEquals(1, ladder.renditions.size)
         assertEquals(1, tabCalls.get())
         assertEquals(0, legacyCalls.get())
@@ -241,7 +241,7 @@ class ContentRepositoryTest {
                 }
                 .build()
         val repo = ContentRepository(http, playbackSession = PlaybackDeviceSession())
-        val ladder = repo.streamLadder("123")
+        val ladder = repo.legacyStreamLadder("123")
         assertEquals(1, ladder.renditions.size)
         assertEquals(1, legacyCalls.get())
     }
@@ -282,7 +282,7 @@ class ContentRepositoryTest {
                 )
                 .toString()
         }
-        val tier = repo.streamLadder("123").renditions.single()
+        val tier = repo.legacyStreamLadder("123").renditions.single()
         assertEquals(1, requests.size)
         assertEquals("https://example.com/inline", tier.url)
         assertEquals(720, tier.quality)
@@ -341,7 +341,7 @@ class ContentRepositoryTest {
             }
             assertEquals(
                 "https://example.com/valid",
-                repo.streamLadder("123").renditions.single().url,
+                repo.legacyStreamLadder("123").renditions.single().url,
             )
             assertEquals(2, calls)
         }
@@ -405,7 +405,7 @@ class ContentRepositoryTest {
             """{"Code":110001}"""
         }
         repeat(2) {
-            val error = assertThrows(IOException::class.java) { repo.stream("123") }
+            val error = assertThrows(IOException::class.java) { repo.legacyStream("123") }
             assertTrue(error.message.orEmpty().contains("110001"))
         }
         for (request in requests) {
@@ -444,7 +444,7 @@ class ContentRepositoryTest {
             calls++
             "   "
         }
-        val error = assertThrows(IOException::class.java) { repo.stream("123") }
+        val error = assertThrows(IOException::class.java) { repo.legacyStream("123") }
         assertTrue(error.message.orEmpty().contains("空响应"))
         assertFalse(error.message.orEmpty().contains("更新应用"))
         // 首次尝试 + 三次换路重试（b→hl→lf→b）。
@@ -484,20 +484,20 @@ class ContentRepositoryTest {
         }
         assertEquals(
             "https://example.com/video/123",
-            repo.streamLadder("123", listOf("456", "789")).renditions.single().url,
+            repo.legacyStreamLadder("123", listOf("456", "789")).renditions.single().url,
         )
         assertEquals(
             "https://example.com/video/456",
-            repo.streamLadder("456").renditions.single().url,
+            repo.legacyStreamLadder("456").renditions.single().url,
         )
         assertEquals(
             "https://example.com/video/789",
-            repo.streamLadder("789").renditions.single().url,
+            repo.legacyStreamLadder("789").renditions.single().url,
         )
         assertEquals(1, requests.size)
         assertEquals(listOf("123", "456", "789"), playbackRequestIds(requests.single()))
         // 领取后即移除；重试同一集时必须重新获取，避免反复复用失效地址。
-        repo.streamLadder("456")
+        repo.legacyStreamLadder("456")
         assertEquals(2, requests.size)
     }
 
@@ -510,9 +510,9 @@ class ContentRepositoryTest {
                 calls++
                 batchPlaybackFixture(playbackRequestIds(request))
             }
-        repo.streamLadder("123", listOf("456"))
+        repo.legacyStreamLadder("123", listOf("456"))
         now += 60_001
-        repo.streamLadder("456")
+        repo.legacyStreamLadder("456")
         assertEquals(2, calls)
     }
 
@@ -523,14 +523,14 @@ class ContentRepositoryTest {
             calls++
             batchPlaybackFixture(listOf(playbackRequestIds(request).first()))
         }
-        repo.streamLadder("123", listOf("456"))
+        repo.legacyStreamLadder("123", listOf("456"))
         assertEquals(
             "https://example.com/video/456",
-            repo.streamLadder("456").renditions.single().url,
+            repo.legacyStreamLadder("456").renditions.single().url,
         )
         assertEquals(2, calls)
         val missingCurrent = repository { batchPlaybackFixture(listOf("456")) }
-        assertThrows(IOException::class.java) { missingCurrent.streamLadder("123", listOf("456")) }
+        assertThrows(IOException::class.java) { missingCurrent.legacyStreamLadder("123", listOf("456")) }
     }
 
     @Test
@@ -539,10 +539,10 @@ class ContentRepositoryTest {
         val repo = repository { request ->
             if (++calls < 3) "" else batchPlaybackFixture(playbackRequestIds(request))
         }
-        repo.streamLadder("123", listOf("456"))
+        repo.legacyStreamLadder("123", listOf("456"))
         assertEquals(
             "https://example.com/video/456",
-            repo.streamLadder("456").renditions.single().url,
+            repo.legacyStreamLadder("456").renditions.single().url,
         )
         assertEquals(3, calls)
     }
@@ -557,7 +557,7 @@ class ContentRepositoryTest {
                 now += 1000
                 if (requests.size == 1) " \n " else inlinePlaybackFixture()
             }
-        assertEquals("https://example.com/video", repo.streamLadder("123").renditions.single().url)
+        assertEquals("https://example.com/video", repo.legacyStreamLadder("123").renditions.single().url)
         assertEquals(2, requests.size)
         // 换路重试：host 轮换到备选，设备身份查询参数保持一致；
         // ts/_rticket 参与签名，随整请求重签一并刷新。
@@ -594,7 +594,7 @@ class ContentRepositoryTest {
             if (++calls == 1) throw java.net.SocketTimeoutException("fixture")
             inlinePlaybackFixture()
         }
-        assertEquals(720, repo.streamLadder("123").renditions.single().quality)
+        assertEquals(720, repo.legacyStreamLadder("123").renditions.single().quality)
         assertEquals(2, calls)
     }
 
@@ -606,7 +606,7 @@ class ContentRepositoryTest {
                 calls++
                 body
             }
-            assertThrows(Exception::class.java) { repo.streamLadder("123") }
+            assertThrows(Exception::class.java) { repo.legacyStreamLadder("123") }
             assertEquals(1, calls)
         }
     }
@@ -620,7 +620,7 @@ class ContentRepositoryTest {
             scope.cancel()
             ""
         }
-        assertThrows(IOException::class.java) { scope.run { repo.streamLadder("123") } }
+        assertThrows(IOException::class.java) { scope.run { repo.legacyStreamLadder("123") } }
         assertEquals(1, calls)
     }
 
@@ -654,7 +654,7 @@ class ContentRepositoryTest {
                 Triple(720, "bytevc2", "https://example.com/unsupported"),
                 Triple(1080, "bytevc1", "https://example.com/hevc"),
             )
-        val result = repo.stream("123", 720)
+        val result = repo.legacyStream("123", 720)
         assertEquals("https://example.com/hevc", result.url)
         assertEquals("1080P（兼容资源）", result.quality)
     }
@@ -667,7 +667,7 @@ class ContentRepositoryTest {
                 Triple(480, "h264", "https://example.com/avc"),
                 Triple(1080, "bytevc1", "https://example.com/hevc"),
             )
-        assertEquals("480P", repo.stream("123", 720).quality)
+        assertEquals("480P", repo.legacyStream("123", 720).quality)
     }
 
     @Test
@@ -684,7 +684,7 @@ class ContentRepositoryTest {
                 """{"video_info":{"data":{"video_list":{"video_1":{"vwidth":1254,"vheight":720,"codec_type":"$codec","main_url":"https://example.com/video"}}}}}"""
             }
         }
-        val tier = repo.streamLadder("123").renditions.single()
+        val tier = repo.legacyStreamLadder("123").renditions.single()
         assertEquals("h265", tier.codec)
         assertEquals(2, fallbackRequests.size)
         assertEquals("fixture", fallbackRequests.last().url.queryParameter("token"))
@@ -702,8 +702,8 @@ class ContentRepositoryTest {
                     """{"video_info":{"data":{"video_list":{"video_1":{"vheight":720,"codec_type":"$codec","main_url":"https://example.com/video"}}}}}"""
                 }
             }
-            if (expectedCalls == 2) assertThrows(IOException::class.java) { repo.streamLadder("123") }
-            else assertEquals(codec, repo.streamLadder("123").renditions.single().codec)
+            if (expectedCalls == 2) assertThrows(IOException::class.java) { repo.legacyStreamLadder("123") }
+            else assertEquals(codec, repo.legacyStreamLadder("123").renditions.single().codec)
             assertEquals(expectedCalls, calls)
         }
     }
@@ -715,7 +715,7 @@ class ContentRepositoryTest {
                 Triple(720, "ByteVC2", "https://example.com/unsupported"),
                 Triple(480, "bvc2", "https://example.com/unsupported2"),
             )
-        assertThrows(IOException::class.java) { repo.stream("123", 720) }
+        assertThrows(IOException::class.java) { repo.legacyStream("123", 720) }
     }
 
     @Test
@@ -725,7 +725,7 @@ class ContentRepositoryTest {
                 Triple(720, "", "https://example.com/legacy"),
                 Triple(1080, "bytevc1", "https://example.com/hevc"),
             )
-        assertEquals("720P", repo.stream("123", 720).quality)
+        assertEquals("720P", repo.legacyStream("123", 720).quality)
     }
 
     @Test
@@ -735,7 +735,7 @@ class ContentRepositoryTest {
                 Triple(1080, "bytevc1", "https://example.com/hevc"),
                 Triple(480, "h264", "https://example.com/avc"),
             )
-        val info = repo.stream("123", 1080) { it.codec == "h264" }
+        val info = repo.legacyStream("123", 1080) { it.codec == "h264" }
         assertEquals("480P", info.quality)
         assertEquals("https://example.com/avc", info.url)
     }
@@ -773,7 +773,7 @@ class ContentRepositoryTest {
             } else
                 """{"data":{"123":{"video_model":{"fallback_api":"https://example.com/stream"}}}}"""
         }
-        val ladder = repo.streamLadder("123")
+        val ladder = repo.legacyStreamLadder("123")
         val portrait = ladder.renditions.first { it.url.endsWith("/portrait") }
         assertEquals("h264", portrait.codec)
         assertEquals(1080, portrait.width)

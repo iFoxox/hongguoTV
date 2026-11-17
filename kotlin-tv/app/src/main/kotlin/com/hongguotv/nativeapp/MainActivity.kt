@@ -3889,6 +3889,7 @@ class MainActivity : Activity() {
                                     CodecCapabilities::supports,
                                     initialBytes = 32 * 1024,
                                     metadataAhead = metadataAhead,
+                                    speculative = true,
                                 ) {
                                     it == null || CodecCapabilities.supports(it)
                                 } ?: throw java.io.IOException("没有电视可播放的清晰度")

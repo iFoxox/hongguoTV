@@ -41,7 +41,7 @@ class TabVideoModelTest {
                 200 to JSONObject().put("code", 0).put("data",
                     JSONObject().put("video_model_data", JSONObject().put("123", entry))).toString()
             }
-            assertEquals("https://example.test/video", repo.streamLadder("123").renditions.single().url)
+            assertEquals("https://example.test/video", repo.legacyStreamLadder("123").renditions.single().url)
             assertEquals(1, calls)
         }
     }
@@ -56,7 +56,7 @@ class TabVideoModelTest {
                 200 to if (request.url.encodedPath == path) response
                     else """{"data":{"123":{"video_model":$model}}}"""
             }
-            assertEquals(720, repo.streamLadder("123").renditions.single().quality)
+            assertEquals(720, repo.legacyStreamLadder("123").renditions.single().quality)
             assertEquals(listOf("GET", "POST"), requests.map { it.method })
             assertEquals(listOf("333", "333"), requests.map { it.url.queryParameter("device_id") })
         }
@@ -66,7 +66,7 @@ class TabVideoModelTest {
         for (status in listOf(401, 403, 429)) {
             var calls = 0
             val repo = repository { calls++; status to "" }
-            val error = assertThrows(ContentHttpException::class.java) { repo.streamLadder("123") }
+            val error = assertThrows(ContentHttpException::class.java) { repo.legacyStreamLadder("123") }
             assertEquals(status, error.statusCode)
             assertEquals(1, calls)
         }

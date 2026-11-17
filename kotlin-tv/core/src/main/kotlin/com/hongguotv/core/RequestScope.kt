@@ -46,11 +46,34 @@ class RequestScope {
 
     companion object {
         private val current = ThreadLocal<RequestScope>()
+        private val deadline = ThreadLocal<Long>()
+
+        /** 同一轮内的注册、签名请求和正文读取共享绝对截止时间，嵌套调用不能延长预算。 */
+        fun <T> withDeadline(endNanos: Long, action: () -> T): T {
+            val previous = deadline.get()
+            deadline.set(if (previous == null) endNanos else minOf(previous, endNanos))
+            try {
+                return action()
+            } finally {
+                if (previous == null) deadline.remove() else deadline.set(previous)
+            }
+        }
+
+        /** 在签名、状态提交和重试前检查取消，避免旧任务污染下一次播放。 */
+        fun ensureActive() {
+            val owner = current.get()
+            if (Thread.currentThread().isInterrupted || owner != null && synchronized(owner) { owner.cancelled })
+                throw java.io.InterruptedIOException("请求已取消")
+        }
 
         fun <T> execute(call: Call, consume: (Response) -> T): T {
             val owner = current.get()
             owner?.attach(call)
             try {
+                deadline.get()?.let { end ->
+                    val timeout = call.timeout()
+                    timeout.deadlineNanoTime(if (timeout.hasDeadline()) minOf(timeout.deadlineNanoTime(), end) else end)
+                }
                 return call.execute().use(consume)
             } finally {
                 owner?.detach(call)

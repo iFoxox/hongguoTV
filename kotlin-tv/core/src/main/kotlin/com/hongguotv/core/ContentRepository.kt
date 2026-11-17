@@ -796,8 +796,18 @@ constructor(
         maxQuality: Int = 1080,
         supported: (Rendition) -> Boolean = { true },
     ): StreamInfo {
+        return selectStream(streamLadder(id), maxQuality, supported)
+    }
+
+    internal fun legacyStream(
+        id: String,
+        maxQuality: Int = 1080,
+        supported: (Rendition) -> Boolean = { true },
+    ): StreamInfo = selectStream(legacyStreamLadder(id), maxQuality, supported)
+
+    private fun selectStream(ladder: StreamLadder, maxQuality: Int, supported: (Rendition) -> Boolean): StreamInfo {
         val selected =
-            streamLadder(id).select(maxQuality, supported)
+            ladder.select(maxQuality, supported)
                 ?: throw IOException("没有电视可播放的清晰度，请稍后再试或选择其他剧集")
         val info = selected.toStreamInfo()
         return if (selected.quality > maxQuality) info.copy(quality = info.quality + "（兼容资源）")
@@ -806,7 +816,31 @@ constructor(
 
     /** Every playable rendition of one episode, best tier first; one player-API round trip. */
     @JvmOverloads
-    fun streamLadder(id: String, metadataAhead: List<String> = emptyList()): StreamLadder {
+    fun streamLadder(id: String, metadataAhead: List<String> = emptyList(), speculative: Boolean = false): StreamLadder {
+        require(id.matches(Regex("[0-9]{1,30}")))
+        require(metadataAhead.size <= 2 && metadataAhead.all { it.matches(Regex("[0-9]{1,30}")) })
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(if (speculative) 2 else 8)
+        val entry = RequestScope.withDeadline(deadline) {
+            RequestScope.ensureActive()
+            val identity = if (speculative)
+                playbackSession.currentProfile() ?: throw IOException("后台播放准备等待前台设备注册")
+            else playbackSession.profile(http)
+            fun fetch(profile: PlaybackDeviceSession.Profile) =
+                MobilePlayback.model(id, profile.values, http, MobilePlayback.signer, clock())
+            try {
+                fetch(identity)
+            } catch (problem: EmptyPlaybackResponseException) {
+                RequestScope.ensureActive()
+                // Limit registration retries across concurrent playback requests.
+                if (speculative || !playbackSession.rotateAfterEmpty(http, identity)) throw problem
+                fetch(playbackSession.profile(http))
+            }
+        }
+        return parsePlaybackEntry(entry)
+    }
+
+    /** 旧接口保留给离线回归测试。 */
+    internal fun legacyStreamLadder(id: String, metadataAhead: List<String> = emptyList()): StreamLadder {
         require(id.matches(Regex("[0-9]{1,30}")))
         require(metadataAhead.size <= 2 && metadataAhead.all { it.matches(Regex("[0-9]{1,30}")) })
         // 后续模型仅在内存保留 60 秒，领取即移除；失败重试不会反复复用同一个旧地址。
@@ -945,6 +979,10 @@ constructor(
                     }
                     current
                 }
+        return parsePlaybackEntry(entry)
+    }
+
+    private fun parsePlaybackEntry(entry: JSONObject): StreamLadder {
         val model = entry.optJSONObject("video_model") ?: JSONObject(entry.str("video_model"))
         // The current model already carries plain media URLs, dimensions and CENC keys.
         // Only use the legacy fallback endpoint when this shape has no usable rendition.

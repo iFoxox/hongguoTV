@@ -27,8 +27,8 @@ class PlaybackRegistrationCompatibilityTest {
                 }
                 request.url.queryParameter("device_id") != "7654321" -> ""
                 else -> {
-                    assertEquals("/reading/bookapi/video_tab/multi_video_model/v1/", request.url.encodedPath)
-                    assertEquals("GET", request.method)
+                    assertEquals("/novel/player/multi_video_model/player/v1", request.url.encodedPath)
+                    assertEquals("POST", request.method)
                     tabModels++
                     """{"code":0,"data":{"123":{"video_model":{"video_list":[{"main_url":"https://example.com/video","video_meta":{"definition":"720p","codec_type":"h264","vwidth":720,"vheight":1280},"encrypt_info":{"encrypt":false}}]}}}}"""
                 }

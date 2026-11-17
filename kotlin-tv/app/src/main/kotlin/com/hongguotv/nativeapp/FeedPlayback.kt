@@ -188,7 +188,7 @@ internal class PublicFeedBackend(
 
     override fun detail(series: Series) = timed("detail") { repository.detail(series.id) }
 
-    private fun open(id: String): OpenedStream =
+    private fun open(id: String, speculative: Boolean = false): OpenedStream =
         openStream(
             http,
             repository,
@@ -196,6 +196,7 @@ internal class PublicFeedBackend(
             quality,
             CodecCapabilities::supports,
             initialBytes = 32 * 1024,
+            speculative = speculative,
         ) {
             it == null || CodecCapabilities.supports(it)
         } ?: throw java.io.IOException("该作品暂时没有可试播的剧集")
@@ -209,13 +210,13 @@ internal class PublicFeedBackend(
 
     // 第一集优先；bytevc2 锁定集（该集无电视可解码档）后移，最多探到第三集并回报实际序号。
     // 全部不可解时给确定性文案，不再报「暂时没有可试播的剧集」。
-    private fun openTrialEpisode(series: Series, hint: TrialHint): OpenedTrial {
+    private fun openTrialEpisode(series: Series, hint: TrialHint, speculative: Boolean): OpenedTrial {
         try {
-            return OpenedTrial(timed("play-address") { open(hint.episodeId) }, hint.episodeId, 1)
+            return OpenedTrial(timed("play-address") { open(hint.episodeId, speculative) }, hint.episodeId, 1)
         } catch (problem: NoPlayableQualityException) {
             val full = detail(series)
             val found =
-                firstPlayableEpisode(full.episodes, 1, ::open)
+                firstPlayableEpisode(full.episodes, 1) { open(it, speculative) }
                     ?: throw java.io.IOException("该剧暂无电视可解码的清晰度")
             return OpenedTrial(found.first, full.episodes[found.second], found.second + 1)
         }
@@ -224,7 +225,7 @@ internal class PublicFeedBackend(
     override fun prepare(detail: Detail): TrialClip {
         if (detail.episodes.isEmpty()) throw java.io.IOException("该作品暂时没有可试播的剧集")
         val found =
-            firstPlayableEpisode(detail.episodes, 0, ::open)
+            firstPlayableEpisode(detail.episodes, 0) { open(it) }
                 ?: throw java.io.IOException("该剧暂无电视可解码的清晰度")
         return TrialClip(
             detail.copy(episodes = listOf(detail.episodes[found.second])),
@@ -235,7 +236,7 @@ internal class PublicFeedBackend(
         )
     }
 
-    private fun loadTrial(series: Series): TrialClip {
+    private fun loadTrial(series: Series, speculative: Boolean = false): TrialClip {
         val hint =
             synchronized(trialHints) { trialHints[series.id] }
                 ?: run {
@@ -262,7 +263,7 @@ internal class PublicFeedBackend(
                     }
                     verified
                 }
-        val openedTrial = openTrialEpisode(series, hint)
+        val openedTrial = openTrialEpisode(series, hint, speculative)
         return TrialClip(
             Detail(series, listOf(openedTrial.episodeId)),
             openedTrial.opened.video,
@@ -274,7 +275,7 @@ internal class PublicFeedBackend(
 
     // Publish the prepared header immediately. Media3 preloads samples according to duration;
     // a foreground switch must not wait for an additional fixed 1 MiB speculative download.
-    override fun preload(series: Series): TrialClip = loadTrial(series)
+    override fun preload(series: Series): TrialClip = loadTrial(series, speculative = true)
 
     override fun trial(series: Series): TrialClip {
         repeat(2) {

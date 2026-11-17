@@ -127,10 +127,11 @@ internal fun openStream(
     supportsRendition: (Rendition) -> Boolean,
     initialBytes: Int = 256 * 1024,
     metadataAhead: List<String> = emptyList(),
+    speculative: Boolean = false,
     supportsTrack: (VideoTracks.Track?) -> Boolean,
 ): OpenedStream? {
     val ladder = try {
-        repository.streamLadder(id, metadataAhead)
+        repository.streamLadder(id, metadataAhead, speculative)
     } catch (_: UnsupportedVideoCodecException) {
         throw NoPlayableQualityException()
     }
