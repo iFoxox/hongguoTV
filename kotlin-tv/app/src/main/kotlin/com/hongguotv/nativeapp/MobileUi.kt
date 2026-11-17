@@ -330,6 +330,9 @@ internal class MobilePlayerView(context: Context, private val action: (Action, V
         video.setOnClickListener { action(Action.TOGGLE,it) }
         video.addView(overlay,FrameLayout.LayoutParams(-1,-1))
     }
+    fun setFullscreenInsets(left: Int, top: Int, right: Int, bottom: Int) {
+        overlay.setPadding(left, top, right, bottom + dp(2))
+    }
     fun update(series:Series, index:Int, count:Int, playing:Boolean, favoriteLabel:String) {
         title.text=series.title; metadata.text="第 ${index+1} 集 / 共 $count 集"
         synopsis.text=series.description.ifBlank { "暂无剧情简介" }

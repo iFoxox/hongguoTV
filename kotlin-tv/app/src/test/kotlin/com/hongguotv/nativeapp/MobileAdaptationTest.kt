@@ -149,7 +149,7 @@ class MobileAdaptationTest {
     }
 
     @Test
-    @Config(qualifiers = "w320dp-h640dp-port-mdpi")
+    @Config(sdk = [23, 26, 28], qualifiers = "w320dp-h640dp-port-mdpi")
     fun activityFullscreenActionAndBackRestoreOrientationWithoutReplacingPlayerView() {
         val controller=Robolectric.buildActivity(MainActivity::class.java).setup()
         val activity=controller.get()
@@ -167,17 +167,37 @@ class MobileAdaptationTest {
             val playerField=MainActivity::class.java.getDeclaredField("mobilePlayer").apply { isAccessible=true }
             val player=playerField.get(activity) as MobilePlayerView
             val video=player.video.getChildAt(0)
+            val insets=MainActivity::class.java.getDeclaredMethod("updateWindowInsets",
+                androidx.core.graphics.Insets::class.java, Int::class.javaPrimitiveType)
+                .apply { isAccessible=true }
+            // 模拟横屏刘海在左侧，系统栏隐藏后刘海边距仍然存在。
+            insets.invoke(activity,androidx.core.graphics.Insets.of(36,24,18,20),0)
+            assertEquals(36,player.paddingLeft)
             texts(player).single { it.text=="竖屏全屏" }.performClick()
             assertTrue(player.fullscreen)
+            assertEquals(0,player.paddingLeft)
+            assertEquals(36,player.overlay.paddingLeft)
+            assertEquals(18,player.overlay.paddingRight)
             assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT,activity.requestedOrientation)
             MainActivity::class.java.getDeclaredMethod("goBack").apply { isAccessible=true }.invoke(activity)
             assertFalse(player.fullscreen)
+            assertEquals(36,player.paddingLeft)
+            assertEquals(0,player.overlay.paddingLeft)
             assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT,activity.requestedOrientation)
             texts(player).single { it.text=="横屏全屏" }.performClick()
             assertTrue(player.fullscreen)
+            assertEquals(0,player.paddingLeft)
+            assertEquals(36,player.overlay.paddingLeft)
+            // 旋转或系统边距变化时，视频仍铺满，控制层随之更新。
+            insets.invoke(activity,androidx.core.graphics.Insets.of(44,0,12,0),0)
+            assertEquals(0,player.paddingLeft)
+            assertEquals(44,player.overlay.paddingLeft)
+            assertEquals(12,player.overlay.paddingRight)
             assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE,activity.requestedOrientation)
             MainActivity::class.java.getDeclaredMethod("goBack").apply { isAccessible=true }.invoke(activity)
             assertFalse(player.fullscreen)
+            assertEquals(44,player.paddingLeft)
+            assertEquals(12,player.paddingRight)
             assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT,activity.requestedOrientation)
             assertSame(player,playerField.get(activity))
             assertSame(video,player.video.getChildAt(0))
